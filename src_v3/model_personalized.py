@@ -1,9 +1,9 @@
 '''
 Created on June 10, 2025
-Enhanced Universal Spectral CF with THREE-VIEW Spectral Filtering
-UPDATED: Full support for 'ub' filter (User + Bipartite)
+Enhanced Universal Spectral CF with THREE-VIEW Spectral Filtering and 2-HOP Support
+UPDATED: Full support for 'ub' filter (User + Bipartite) with 2-hop propagation
 
-This provides three complementary perspectives for collaborative filtering.
+This provides three complementary perspectives for collaborative filtering with multi-hop neighborhood exploration.
 
 @author: Tseesuren Batsuuri (tseesuren.batsuuri@hdr.mq.edu.au)
 '''
@@ -194,7 +194,7 @@ class OptimizedUserSpecificFilter(nn.Module):
 
 
 class UserSpecificUniversalSpectralCF(nn.Module):
-    """COMPLETE User-Specific Universal Spectral CF with FULL BIPARTITE SUPPORT"""
+    """COMPLETE User-Specific Universal Spectral CF with 2-HOP SUPPORT"""
     
     def __init__(self, adj_mat, config=None):
         super().__init__()
@@ -204,6 +204,10 @@ class UserSpecificUniversalSpectralCF(nn.Module):
         self.device = self.config.get('device', 'cpu')
         self.filter_order = self.config.get('filter_order', 6)
         self.filter = self.config.get('filter', 'ui')
+        
+        # 2-HOP Configuration
+        self.n_hops = self.config.get('n_hops', 1)  # 1 or 2 hops
+        self.hop_decay = self.config.get('hop_decay', 0.5)  # Decay factor for 2nd hop
         
         # User-specific configuration
         self.shared_base = self.config.get('shared_base', True)
@@ -233,11 +237,14 @@ class UserSpecificUniversalSpectralCF(nn.Module):
         self.similarity_type = self.config.get('similarity_type', 'cosine')
         self.similarity_threshold = self.config.get('similarity_threshold', 0.01)
         
-        print(f"🚀 COMPLETE USER-SPECIFIC Universal Spectral CF with BIPARTITE SUPPORT:")
+        print(f"🚀 2-HOP USER-SPECIFIC Universal Spectral CF:")
         print(f"   └─ Dataset: {self.config.get('dataset', 'unknown')}")
         print(f"   └─ Users: {self.n_users:,}, Items: {self.n_items:,}")
         print(f"   └─ Interactions: {int(total_interactions):,}")
-        print(f"   🎯 THREE-VIEW EIGENVALUES:")
+        print(f"   🎯 2-HOP CONFIGURATION:")
+        print(f"      Hops: {self.n_hops} ({'2-hop' if self.n_hops == 2 else '1-hop'})")
+        print(f"      Hop decay: {self.hop_decay}")
+        print(f"   🔍 THREE SPECTRAL VIEWS:")
         print(f"      1️⃣ User-User: {self.u_n_eigen} eigenvalues")
         print(f"      2️⃣ Item-Item: {self.i_n_eigen} eigenvalues")
         print(f"      3️⃣ User-Item Bipartite: {self.b_n_eigen} eigenvalues")
@@ -348,8 +355,9 @@ class UserSpecificUniversalSpectralCF(nn.Module):
         filter_mode = self.filter
         fast_mode = 'fast' if self.enable_fast_mode else 'normal'
         shared_mode = 'shared' if self.shared_base else 'personal'
+        hop_mode = f'{self.n_hops}hop'
         
-        base_name = f"{dataset}_USER_SPECIFIC_THREE_VIEW_{sim_type}_th{threshold}_u{u_eigen}_i{i_eigen}_b{b_eigen}_{filter_design}_{filter_mode}_{fast_mode}_{shared_mode}"
+        base_name = f"{dataset}_USER_SPECIFIC_2HOP_{sim_type}_th{threshold}_u{u_eigen}_i{i_eigen}_b{b_eigen}_{filter_design}_{filter_mode}_{fast_mode}_{shared_mode}_{hop_mode}"
         
         if filter_type:
             if cache_type.startswith('similarity'):
@@ -648,78 +656,250 @@ class UserSpecificUniversalSpectralCF(nn.Module):
             torch.cuda.empty_cache()
     
     def _setup_combination_weights(self):
-        """Setup learnable combination weights for THREE VIEWS"""
+        """Setup learnable combination weights for THREE VIEWS and 2-HOP"""
+        base_components = []
+        
         if self.filter == 'u':
-            # User similarity only
-            init_weights = torch.tensor([0.5, 0.5])  # [direct, user_filtered]
+            base_components = ['direct', 'user_filtered']
         elif self.filter == 'i':
-            # Item similarity only
-            init_weights = torch.tensor([0.5, 0.5])  # [direct, item_filtered]
+            base_components = ['direct', 'item_filtered']
         elif self.filter == 'b':
-            # Bipartite only
-            init_weights = torch.tensor([0.5, 0.5])  # [direct, bipartite_filtered]
+            base_components = ['direct', 'bipartite_filtered']
         elif self.filter == 'ui':
-            # User + Item similarities
-            init_weights = torch.tensor([0.5, 0.3, 0.2])  # [direct, item_filtered, user_filtered]
-        elif self.filter == 'ub':  # NEW: User + Bipartite
-            # User + Bipartite similarities
-            init_weights = torch.tensor([0.5, 0.3, 0.2])  # [direct, user_filtered, bipartite_filtered]
+            base_components = ['direct', 'item_filtered', 'user_filtered']
+        elif self.filter == 'ub':
+            base_components = ['direct', 'user_filtered', 'bipartite_filtered']
         elif self.filter == 'uib':
-            # ALL THREE views (COMPLETE SUPPORT!)
-            init_weights = torch.tensor([0.4, 0.25, 0.25, 0.1])  # [direct, item_filtered, user_filtered, bipartite_filtered]
+            base_components = ['direct', 'item_filtered', 'user_filtered', 'bipartite_filtered']
         else:
-            # Default fallback
-            init_weights = torch.tensor([0.5, 0.5])
+            base_components = ['direct', 'filtered']
+        
+        # For 2-hop, double the number of components (1-hop + 2-hop)
+        if self.n_hops == 2:
+            hop_components = []
+            for comp in base_components:
+                hop_components.extend([f"{comp}_1hop", f"{comp}_2hop"])
+            n_components = len(hop_components)
+            
+            # Initialize with decay for 2-hop components
+            init_weights = torch.ones(n_components)
+            for i in range(len(base_components)):
+                init_weights[2*i] = 1.0  # 1-hop weight
+                init_weights[2*i+1] = self.hop_decay  # 2-hop weight (decayed)
+            
+            print(f"   🎚️  2-HOP combination weights: {hop_components}")
+        else:
+            # Standard 1-hop weights
+            if self.filter == 'u':
+                init_weights = torch.tensor([0.5, 0.5])
+            elif self.filter == 'i':
+                init_weights = torch.tensor([0.5, 0.5])
+            elif self.filter == 'b':
+                init_weights = torch.tensor([0.5, 0.5])
+            elif self.filter == 'ui':
+                init_weights = torch.tensor([0.5, 0.3, 0.2])
+            elif self.filter == 'ub':
+                init_weights = torch.tensor([0.5, 0.3, 0.2])
+            elif self.filter == 'uib':
+                init_weights = torch.tensor([0.4, 0.25, 0.25, 0.1])
+            else:
+                init_weights = torch.tensor([0.5, 0.5])
+            
+            print(f"   🎚️  1-HOP combination weights: {base_components}")
         
         self.combination_weights = nn.Parameter(init_weights.to(self.device))
-        
-        print(f"   🎚️  THREE-VIEW combination weights initialized: {init_weights.tolist()}")
+        print(f"   🎯 Initialized with decay factor: {self.hop_decay}")
     
     def forward(self, users):
-        """FIXED forward pass - NO MORE NESTED LOOPS (5-10x faster!)"""
+        """2-HOP forward pass with personalized spectral filtering"""
         if users.device != self.adj_tensor.device:
             users = users.to(self.adj_tensor.device)
         
         batch_size = users.shape[0]
         user_profiles = self.adj_tensor[users]  # [batch_size, n_items]
         
-        scores = [user_profiles]  # Direct collaborative filtering scores
+        # Collect scores from both 1-hop and 2-hop
+        all_scores = []
         
-        # Item-based filtering (UNCHANGED - already fast)
-        if self.filter in ['i', 'ui', 'uib'] and self.item_filter is not None:  # NOTE: 'ub' NOT included
-            item_responses = self.item_filter(self.item_eigenvals, users)  # [batch_size, n_eigenvals]
-            avg_item_response = item_responses.mean(dim=0)  # [n_eigenvals]
-            item_filtered = user_profiles @ (self.item_eigenvecs @ torch.diag(avg_item_response) @ self.item_eigenvecs.t())
-            scores.append(item_filtered)
+        # 1-HOP SCORES
+        hop1_scores = self._compute_1hop_scores(users, user_profiles)
+        all_scores.extend(hop1_scores)
         
-        # User-based filtering (FIXED - removed nested loop!)
-        if self.filter in ['u', 'ui', 'uib', 'ub'] and self.user_filter is not None:  # UPDATED: Added 'ub'
-            user_responses = self.user_filter(self.user_eigenvals, users)  # [batch_size, n_eigenvals]
-            
-            # VECTORIZED: Use average response instead of per-user loop
-            avg_user_response = user_responses.mean(dim=0)  # [n_eigenvals]
-            user_matrix = self.user_eigenvecs @ torch.diag(avg_user_response) @ self.user_eigenvecs.t()
-            user_filtered_batch = user_matrix[users] @ self.adj_tensor  # [batch_size, n_items]
-            scores.append(user_filtered_batch)
+        # 2-HOP SCORES (if enabled)
+        if self.n_hops == 2:
+            hop2_scores = self._compute_2hop_scores(users, user_profiles)
+            all_scores.extend(hop2_scores)
         
-        # Bipartite filtering (FIXED - removed nested loop!)
-        if self.filter in ['b', 'uib', 'ub'] and self.bipartite_filter is not None:  # UPDATED: Added 'ub'
-            bipartite_responses = self.bipartite_filter(self.bipartite_eigenvals, users)  # [batch_size, n_eigenvals]
-            
-            # VECTORIZED: Use average response and efficient matrix operations
-            avg_bipartite_response = bipartite_responses.mean(dim=0)  # [n_eigenvals]
-            bipartite_matrix = self.bipartite_eigenvecs @ torch.diag(avg_bipartite_response) @ self.bipartite_eigenvecs.t()
-            
-            # Extract item-item part efficiently (no loops!)
-            item_part = bipartite_matrix[self.n_users:, self.n_users:]  # [n_items, n_items]
-            bipartite_batch = user_profiles @ item_part  # [batch_size, n_items]
-            scores.append(bipartite_batch)
-        
-        # Combine predictions using learnable weights
+        # Combine all scores using learnable weights
         weights = torch.softmax(self.combination_weights, dim=0)
-        predicted = sum(w * score for w, score in zip(weights, scores))
+        predicted = sum(w * score for w, score in zip(weights, all_scores))
         
         return predicted
+    
+    def _compute_1hop_scores(self, users, user_profiles):
+        """Compute 1-hop scores with FULL USER PERSONALIZATION (corrected)"""
+        scores = [user_profiles]  # Direct collaborative filtering scores
+        
+        # Item-based filtering (1-hop) - PERSONALIZED PER USER
+        if self.filter in ['i', 'ui', 'uib'] and self.item_filter is not None:
+            # Get PERSONALIZED item filter responses for each user
+            item_responses = self.item_filter(self.item_eigenvals, users)  # [batch_size, n_eigenvals]
+            
+            # Apply personalized filtering for each user individually
+            item_filtered_batch = []
+            for i, user_id in enumerate(users):
+                # Get this user's personalized item matrix
+                user_item_response = item_responses[i]  # [n_eigenvals]
+                user_item_matrix = self.item_eigenvecs @ torch.diag(user_item_response) @ self.item_eigenvecs.t()
+                
+                # Apply this user's personalized item filter
+                user_item_filtered = user_profiles[i:i+1] @ user_item_matrix  # [1, n_items]
+                item_filtered_batch.append(user_item_filtered)
+            
+            item_filtered = torch.cat(item_filtered_batch, dim=0)  # [batch_size, n_items]
+            scores.append(item_filtered)
+        
+        # User-based filtering (1-hop) - PERSONALIZED PER USER
+        if self.filter in ['u', 'ui', 'uib', 'ub'] and self.user_filter is not None:
+            # Get PERSONALIZED user filter responses for each user
+            user_responses = self.user_filter(self.user_eigenvals, users)  # [batch_size, n_eigenvals]
+            
+            # Apply personalized filtering for each user individually
+            user_filtered_batch = []
+            for i, user_id in enumerate(users):
+                # Get this user's personalized user matrix
+                user_user_response = user_responses[i]  # [n_eigenvals]
+                user_user_matrix = self.user_eigenvecs @ torch.diag(user_user_response) @ self.user_eigenvecs.t()
+                
+                # Apply this user's personalized user filter: User → Similar Users → Items
+                user_filtered_scores = user_user_matrix[user_id:user_id+1] @ self.adj_tensor  # [1, n_items]
+                user_filtered_batch.append(user_filtered_scores)
+            
+            user_filtered = torch.cat(user_filtered_batch, dim=0)  # [batch_size, n_items]
+            scores.append(user_filtered)
+        
+        # Bipartite filtering (1-hop) - PERSONALIZED PER USER
+        if self.filter in ['b', 'uib', 'ub'] and self.bipartite_filter is not None:
+            # Get PERSONALIZED bipartite filter responses for each user
+            bipartite_responses = self.bipartite_filter(self.bipartite_eigenvals, users)  # [batch_size, n_eigenvals]
+            
+            # Apply personalized filtering for each user individually
+            bipartite_filtered_batch = []
+            for i, user_id in enumerate(users):
+                # Get this user's personalized bipartite matrix
+                user_bipartite_response = bipartite_responses[i]  # [n_eigenvals]
+                user_bipartite_matrix = self.bipartite_eigenvecs @ torch.diag(user_bipartite_response) @ self.bipartite_eigenvecs.t()
+                
+                # Extract item-item part for this user's personalized filter
+                user_item_part = user_bipartite_matrix[self.n_users:, self.n_users:]  # [n_items, n_items]
+                
+                # Apply this user's personalized bipartite filter
+                user_bipartite_scores = user_profiles[i:i+1] @ user_item_part  # [1, n_items]
+                bipartite_filtered_batch.append(user_bipartite_scores)
+            
+            bipartite_filtered = torch.cat(bipartite_filtered_batch, dim=0)  # [batch_size, n_items]
+            scores.append(bipartite_filtered)
+        
+        return scores
+    
+    def _compute_2hop_scores(self, users, user_profiles):
+        """Compute 2-hop scores with PERSONALIZED propagation"""
+        scores = []
+        
+        # 2-hop direct: User → Users → Items → Items (non-personalized baseline)
+        direct_2hop = self._propagate_through_users_items(user_profiles)
+        scores.append(direct_2hop)
+        
+        # Item-based 2-hop: User → Items → Items → Items (PERSONALIZED)
+        if self.filter in ['i', 'ui', 'uib'] and self.item_filter is not None:
+            # Get PERSONALIZED item filter responses for each user
+            item_responses = self.item_filter(self.item_eigenvals, users)  # [batch_size, n_eigenvals]
+            
+            # Apply personalized 2-hop propagation for each user
+            item_2hop_batch = []
+            for i, user_id in enumerate(users):
+                # Get this user's personalized item matrix
+                user_item_response = item_responses[i]  # [n_eigenvals]
+                user_item_matrix = self.item_eigenvecs @ torch.diag(user_item_response) @ self.item_eigenvecs.t()
+                
+                # Apply 2-hop for this specific user: Items → Items → Items
+                user_item_2hop = user_profiles[i:i+1] @ user_item_matrix @ user_item_matrix
+                item_2hop_batch.append(user_item_2hop)
+            
+            item_2hop = torch.cat(item_2hop_batch, dim=0)  # [batch_size, n_items]
+            scores.append(item_2hop)
+        
+        # User-based 2-hop: User → Users → Users → Items (PERSONALIZED)
+        if self.filter in ['u', 'ui', 'uib', 'ub'] and self.user_filter is not None:
+            # Get PERSONALIZED user filter responses for each user
+            user_responses = self.user_filter(self.user_eigenvals, users)  # [batch_size, n_eigenvals]
+            
+            # Apply personalized 2-hop propagation for each user
+            user_2hop_batch = []
+            for i, user_id in enumerate(users):
+                # Get this user's personalized user matrix
+                user_user_response = user_responses[i]  # [n_eigenvals]
+                user_user_matrix = self.user_eigenvecs @ torch.diag(user_user_response) @ self.user_eigenvecs.t()
+                
+                # Apply 2-hop for this specific user: User → Users → Users → Items
+                # Start with one-hot user representation
+                user_repr = torch.zeros(1, self.n_users, device=self.device)
+                user_repr[0, user_id] = 1.0
+                
+                # 2-hop propagation through personalized user similarities
+                user_2hop_repr = user_repr @ user_user_matrix @ user_user_matrix
+                user_2hop_scores = user_2hop_repr @ self.adj_tensor  # [1, n_items]
+                user_2hop_batch.append(user_2hop_scores)
+            
+            user_2hop = torch.cat(user_2hop_batch, dim=0)  # [batch_size, n_items]
+            scores.append(user_2hop)
+        
+        # Bipartite 2-hop: User ↔ Items ↔ Users ↔ Items (PERSONALIZED)
+        if self.filter in ['b', 'uib', 'ub'] and self.bipartite_filter is not None:
+            # Get PERSONALIZED bipartite filter responses for each user
+            bipartite_responses = self.bipartite_filter(self.bipartite_eigenvals, users)  # [batch_size, n_eigenvals]
+            
+            # Apply personalized 2-hop propagation for each user
+            bipartite_2hop_batch = []
+            for i, user_id in enumerate(users):
+                # Get this user's personalized bipartite matrix
+                user_bipartite_response = bipartite_responses[i]  # [n_eigenvals]
+                user_bipartite_matrix = self.bipartite_eigenvecs @ torch.diag(user_bipartite_response) @ self.bipartite_eigenvecs.t()
+                
+                # Apply 2-hop bipartite propagation for this user
+                bipartite_input = torch.zeros(1, self.n_users + self.n_items, device=self.device)
+                bipartite_input[0, user_id] = 1.0
+                
+                # 2-hop: bipartite_matrix^2 (personalized)
+                user_bipartite_2hop_matrix = user_bipartite_matrix @ user_bipartite_matrix
+                bipartite_2hop_filtered = bipartite_input @ user_bipartite_2hop_matrix
+                bipartite_2hop_scores = bipartite_2hop_filtered[:, self.n_users:]  # [1, n_items]
+                bipartite_2hop_batch.append(bipartite_2hop_scores)
+            
+            bipartite_2hop = torch.cat(bipartite_2hop_batch, dim=0)  # [batch_size, n_items]
+            scores.append(bipartite_2hop)
+        
+        return scores
+    
+    def _propagate_through_users_items(self, user_profiles):
+        """2-hop propagation: User → Items → Users → Items"""
+        # user_profiles: [batch_size, n_items]
+        # adj_tensor: [n_users, n_items]
+        
+        # Step 1: User → Items (already have user_profiles)
+        # Step 2: Items → Users (find which users are connected to these items)
+        # For each item, find connected users: adj_tensor.t() @ ones gives user connections
+        # We want: for each batch user's items, find other users who also like those items
+        
+        # Method: user_profiles @ adj_tensor.t() gives [batch_size, n_users]
+        # This shows how each batch user relates to all users through shared items
+        user_similarities_via_items = user_profiles @ self.adj_tensor.t()  # [batch_size, n_users]
+        
+        # Step 3: Users → Items (propagate through user similarities to get final items)
+        # user_similarities_via_items @ adj_tensor gives [batch_size, n_items]
+        users_to_items_2hop = user_similarities_via_items @ self.adj_tensor  # [batch_size, n_items]
+        
+        return users_to_items_2hop
     
     def getUsersRating(self, batch_users):
         """Evaluation interface"""
@@ -745,7 +925,7 @@ class UserSpecificUniversalSpectralCF(nn.Module):
             filter_params.extend(self.user_filter.parameters())
         if self.item_filter is not None:
             filter_params.extend(self.item_filter.parameters())
-        if self.bipartite_filter is not None:  # BIPARTITE SUPPORT
+        if self.bipartite_filter is not None:
             filter_params.extend(self.bipartite_filter.parameters())
         return filter_params
     
@@ -788,64 +968,71 @@ class UserSpecificUniversalSpectralCF(nn.Module):
         }
     
     def debug_filter_learning(self):
-        """Debug THREE-VIEW user-specific spectral filtering"""
-        print(f"\n=== THREE-VIEW USER-SPECIFIC FILTER DEBUG ===")
+        """Debug 2-HOP user-specific spectral filtering"""
+        print(f"\n=== 2-HOP USER-SPECIFIC FILTER DEBUG ===")
         print(f"Filter Design: {self.filter_design}")
+        print(f"Hops: {self.n_hops} ({'2-hop enabled' if self.n_hops == 2 else '1-hop only'})")
+        print(f"Hop decay: {self.hop_decay}")
         print(f"Fast Mode: {'Enabled' if self.enable_fast_mode else 'Disabled'}")
         print(f"Shared Base: {self.shared_base}")
         print(f"User Eigenvalues: {self.u_n_eigen}")
         print(f"Item Eigenvalues: {self.i_n_eigen}")
-        print(f"Bipartite Eigenvalues: {self.b_n_eigen}")  # BIPARTITE INFO
+        print(f"Bipartite Eigenvalues: {self.b_n_eigen}")
         print(f"Filter Type: {self.filter}")
         
         param_count = self.get_parameter_count()
         print(f"\nParameter Count:")
         print(f"  Total: {param_count['total']:,}")
         print(f"  User-specific: {param_count['user_specific']:,}")
-        print(f"  Bipartite-specific: {param_count['bipartite_specific']:,}")  # BIPARTITE INFO
+        print(f"  Bipartite-specific: {param_count['bipartite_specific']:,}")
         print(f"  Filter: {param_count['filter']:,}")
         
-        if self.filter in ['u', 'ui', 'uib', 'ub'] and self.user_filter is not None:
-            print(f"\n👤 User Filter Analysis:")
-            if hasattr(self.user_filter, 'base_filter'):
-                print(f"  Base filter type: {type(self.user_filter.base_filter).__name__}")
-            if hasattr(self.user_filter, 'adaptation_type'):
-                print(f"  Adaptation type: {self.user_filter.adaptation_type}")
-        
-        if self.filter in ['i', 'ui', 'uib'] and self.item_filter is not None:
-            print(f"\n🎬 Item Filter Analysis:")
-            if hasattr(self.item_filter, 'base_filter'):
-                print(f"  Base filter type: {type(self.item_filter.base_filter).__name__}")
-            if hasattr(self.item_filter, 'adaptation_type'):
-                print(f"  Adaptation type: {self.item_filter.adaptation_type}")
-        
-        # NEW: BIPARTITE FILTER DEBUG
-        if self.filter in ['b', 'uib', 'ub'] and self.bipartite_filter is not None:
-            print(f"\n🔗 Bipartite Filter Analysis:")
-            if hasattr(self.bipartite_filter, 'base_filter'):
-                print(f"  Base filter type: {type(self.bipartite_filter.base_filter).__name__}")
-            if hasattr(self.bipartite_filter, 'adaptation_type'):
-                print(f"  Adaptation type: {self.bipartite_filter.adaptation_type}")
-        
-        # FIXED: Use detach() before calling numpy()
+        # Show combination weights with hop information
         weights = torch.softmax(self.combination_weights, dim=0)
-        weight_names = []
-        if self.filter == 'uib':
-            weight_names = ['Direct', 'Item', 'User', 'Bipartite']
-        elif self.filter == 'ui':
-            weight_names = ['Direct', 'Item', 'User']
-        elif self.filter == 'ub':  # NEW
-            weight_names = ['Direct', 'User', 'Bipartite']
-        elif self.filter == 'b':
-            weight_names = ['Direct', 'Bipartite']
+        print(f"\n🎚️  2-HOP Combination Weights:")
+        
+        if self.n_hops == 2:
+            weight_names = []
+            if self.filter == 'uib':
+                weight_names = ['Direct_1hop', 'Direct_2hop', 'Item_1hop', 'Item_2hop', 
+                              'User_1hop', 'User_2hop', 'Bipartite_1hop', 'Bipartite_2hop']
+            elif self.filter == 'ui':
+                weight_names = ['Direct_1hop', 'Direct_2hop', 'Item_1hop', 'Item_2hop', 
+                              'User_1hop', 'User_2hop']
+            elif self.filter == 'ub':
+                weight_names = ['Direct_1hop', 'Direct_2hop', 'User_1hop', 'User_2hop', 
+                              'Bipartite_1hop', 'Bipartite_2hop']
+            elif self.filter == 'b':
+                weight_names = ['Direct_1hop', 'Direct_2hop', 'Bipartite_1hop', 'Bipartite_2hop']
+            else:
+                weight_names = ['Direct_1hop', 'Direct_2hop', 'Filtered_1hop', 'Filtered_2hop']
         else:
-            weight_names = ['Direct', 'Filtered']
+            if self.filter == 'uib':
+                weight_names = ['Direct', 'Item', 'User', 'Bipartite']
+            elif self.filter == 'ui':
+                weight_names = ['Direct', 'Item', 'User']
+            elif self.filter == 'ub':
+                weight_names = ['Direct', 'User', 'Bipartite']
+            elif self.filter == 'b':
+                weight_names = ['Direct', 'Bipartite']
+            else:
+                weight_names = ['Direct', 'Filtered']
         
-        print(f"\n🎚️  THREE-VIEW Combination Weights:")
         for i, (name, weight) in enumerate(zip(weight_names, weights.detach().cpu().numpy())):
-            print(f"  {name}: {weight:.4f}")
-        print("=== END THREE-VIEW DEBUG ===\n")
+            hop_info = "🔄" if "2hop" in name else "🎯" if "1hop" in name else "📊"
+            print(f"  {hop_info} {name}: {weight:.4f}")
         
+        # Analyze hop contribution
+        if self.n_hops == 2:
+            hop1_total = sum(weights[i] for i in range(0, len(weights), 2))
+            hop2_total = sum(weights[i] for i in range(1, len(weights), 2))
+            print(f"\n🔍 Hop Analysis:")
+            print(f"  1-hop total contribution: {hop1_total:.4f}")
+            print(f"  2-hop total contribution: {hop2_total:.4f}")
+            print(f"  2-hop/1-hop ratio: {hop2_total/hop1_total:.3f}")
+        
+        print("=== END 2-HOP DEBUG ===\n")
+    
     def clear_cache(self):
         """Clear cache files"""
         cache_dir = "../cache"
@@ -853,7 +1040,7 @@ class UserSpecificUniversalSpectralCF(nn.Module):
             return
         
         dataset = self.config.get('dataset', 'unknown')
-        pattern_parts = [dataset, 'USER_SPECIFIC_THREE_VIEW']
+        pattern_parts = [dataset, 'USER_SPECIFIC_2HOP']
         
         removed_count = 0
         for filename in os.listdir(cache_dir):
@@ -866,140 +1053,61 @@ class UserSpecificUniversalSpectralCF(nn.Module):
                     pass
         
         if removed_count > 0:
-            print(f"Removed {removed_count} user-specific three-view cache files")
-
-    def debug_score_magnitudes(self):
-        """Diagnostic method to check score magnitudes across filter types"""
-        print(f"\n=== SCORE MAGNITUDE ANALYSIS ===")
-        
-        # Sample a few users for testing
-        test_users = torch.LongTensor([0, 1, 2, 3, 4]).to(self.device)
-        user_profiles = self.adj_tensor[test_users]
-        
-        user_filter_matrix, item_filter_matrix, bipartite_filter_matrix = self._get_filter_matrices()
-        
-        print(f"Direct scores (user_profiles):")
-        direct_stats = {
-            'mean': user_profiles.mean().item(),
-            'std': user_profiles.std().item(),
-            'min': user_profiles.min().item(),
-            'max': user_profiles.max().item()
-        }
-        print(f"  Mean: {direct_stats['mean']:.6f}, Std: {direct_stats['std']:.6f}")
-        print(f"  Range: [{direct_stats['min']:.6f}, {direct_stats['max']:.6f}]")
-        
-        # Item filtering scores
-        if item_filter_matrix is not None:
-            item_scores = user_profiles @ item_filter_matrix
-            item_stats = {
-                'mean': item_scores.mean().item(),
-                'std': item_scores.std().item(),
-                'min': item_scores.min().item(),
-                'max': item_scores.max().item()
-            }
-            print(f"\nItem filtered scores:")
-            print(f"  Mean: {item_stats['mean']:.6f}, Std: {item_stats['std']:.6f}")
-            print(f"  Range: [{item_stats['min']:.6f}, {item_stats['max']:.6f}]")
-            print(f"  Magnitude ratio vs direct: {item_stats['mean']/direct_stats['mean']:.2f}x")
-        
-        # User filtering scores  
-        if user_filter_matrix is not None:
-            user_scores = user_filter_matrix[test_users] @ self.adj_tensor
-            user_stats = {
-                'mean': user_scores.mean().item(),
-                'std': user_scores.std().item(),
-                'min': user_scores.min().item(),
-                'max': user_scores.max().item()
-            }
-            print(f"\nUser filtered scores:")
-            print(f"  Mean: {user_stats['mean']:.6f}, Std: {user_stats['std']:.6f}")
-            print(f"  Range: [{user_stats['min']:.6f}, {user_stats['max']:.6f}]")
-            print(f"  Magnitude ratio vs direct: {user_stats['mean']/direct_stats['mean']:.2f}x")
-        
-        # Bipartite filtering scores
-        if bipartite_filter_matrix is not None:
-            batch_size = test_users.shape[0]
-            bipartite_input = torch.zeros(batch_size, self.n_users + self.n_items, device=self.device)
-            bipartite_input[torch.arange(batch_size), test_users] = 1.0
-            bipartite_filtered = bipartite_input @ bipartite_filter_matrix
-            bipartite_scores = bipartite_filtered[:, self.n_users:]
-            
-            bipartite_stats = {
-                'mean': bipartite_scores.mean().item(),
-                'std': bipartite_scores.std().item(),
-                'min': bipartite_scores.min().item(),
-                'max': bipartite_scores.max().item()
-            }
-            print(f"\nBipartite filtered scores:")
-            print(f"  Mean: {bipartite_stats['mean']:.6f}, Std: {bipartite_stats['std']:.6f}")
-            print(f"  Range: [{bipartite_stats['min']:.6f}, {bipartite_stats['max']:.6f}]")
-            print(f"  Magnitude ratio vs direct: {bipartite_stats['mean']/direct_stats['mean']:.2f}x")
-        
-        # Show combination weights
-        weights = torch.softmax(self.combination_weights, dim=0)
-        print(f"\nCombination weights:")
-        weight_names = ['Direct', 'Item', 'User', 'Bipartite'][:len(weights)]
-        for name, weight in zip(weight_names, weights):
-            print(f"  {name}: {weight.item():.6f}")
-        
-        print(f"=== END MAGNITUDE ANALYSIS ===\n")
-
-    # ADD this to your model class and call it after training to see the issue:
-    # model.debug_score_magnitudes()
+            print(f"Removed {removed_count} user-specific 2-hop cache files")
 
 
 # ============================================================================
-# COMPLETE THREE-VIEW USER-SPECIFIC FILTERING - SUMMARY
+# 2-HOP USER-SPECIFIC SPECTRAL FILTERING - SUMMARY
 # ============================================================================
 #
-# 🚀 COMPLETE BIPARTITE SUPPORT ADDED:
+# 🚀 NEW 2-HOP CAPABILITIES:
 #
-# 1. **Three Eigendecompositions**:
-#    - User-User Similarity: Personalized user behavioral patterns
-#    - Item-Item Similarity: Personalized item content patterns  
-#    - User-Item Bipartite: Personalized direct relationships
+# 1. **Dual-Hop Architecture**:
+#    - 1-hop: Direct neighbors (User → Similar users → Items)
+#    - 2-hop: Extended neighbors (User → Similar users → Similar users → Items)
 #
-# 2. **Bipartite Spectral Filtering**:
-#    - Full bipartite Laplacian computation
-#    - User-specific bipartite filter responses
-#    - Personalized bipartite eigenvalue processing
+# 2. **Multi-hop Spectral Filtering**:
+#    - Each hop uses personalized spectral filters
+#    - Independent filter responses for each user at each hop
+#    - Learnable combination of 1-hop and 2-hop information
 #
-# 3. **Enhanced Forward Pass**:
-#    - Complete 'uib' filter support
-#    - Four-way combination weights [direct, item, user, bipartite]
-#    - Efficient personalized filtering for all three views
-#    - NEW: 'ub' filter support [direct, user, bipartite]
+# 3. **2-Hop Implementation by Filter Type**:
+#    - User filter: User → Users → Users → Items
+#    - Item filter: User → Items → Items → Items  
+#    - Bipartite filter: User ↔ Items ↔ Users ↔ Items
+#    - Direct: User → Items → Users → Items
 #
-# 4. **Optimization Features**:
-#    - Fast mode with reduced eigenvalue counts
-#    - Comprehensive caching with three-view cache keys
-#    - Memory-optimized bipartite graph construction
+# 4. **Hop Decay Mechanism**:
+#    - 2-hop components initialized with decay factor (default 0.5)
+#    - Learnable weights balance 1-hop vs 2-hop contributions
+#    - Prevents over-emphasis on distant neighbors
 #
-# 5. **User Personalization**:
-#    - Shared base filters with user-specific adaptations
-#    - Per-user filter responses for all three views
-#    - Learnable combination weights across views
+# 5. **Enhanced Configuration**:
+#    - n_hops: 1 or 2 (configurable)
+#    - hop_decay: Weight initialization for 2-hop components
+#    - Automatic cache key generation includes hop information
 #
 # 🎯 USAGE EXAMPLES:
 # 
-# # Three-view personalized filtering
+# # 2-hop user-specific filtering
 # python main.py --model_type user_specific --dataset ml-100k \
-#     --filter uib --u_n_eigen 30 --i_n_eigen 50 --b_n_eigen 30 \
-#     --shared_base --personalization_dim 16
+#     --filter ui --n_hops 2 --hop_decay 0.6 \
+#     --u_n_eigen 30 --i_n_eigen 50 --shared_base
 #
-# # User + Bipartite personalized filtering (NEW!)
+# # 2-hop user + bipartite filtering
 # python main.py --model_type user_specific --dataset ml-100k \
-#     --filter ub --u_n_eigen 30 --b_n_eigen 40 \
-#     --shared_base --personalization_dim 12
-#
-# # Bipartite-only personalized filtering  
-# python main.py --model_type user_specific --dataset ml-100k \
-#     --filter b --b_n_eigen 40 --personalization_dim 12
+#     --filter ub --n_hops 2 --hop_decay 0.4 \
+#     --u_n_eigen 30 --b_n_eigen 40 --personalization_dim 16
 #
 # 📊 EXPECTED IMPROVEMENTS:
-# - Complete 'ub' filter support (user-centric + global context)
-# - Proper three-view personalized learning
-# - Enhanced user-specific recommendations
-# - Better handling of sparse and cold-start scenarios
+# - Better capture of extended user neighborhoods
+# - Enhanced cold-start performance through 2-hop connections
+# - Richer personalized representations
+# - Improved handling of sparse interaction data
+#
+# 🔧 PARAMETERS TO TUNE:
+# - hop_decay: 0.3-0.7 (lower = less emphasis on 2-hop)
+# - personalization_dim: 8-32 (higher for more complex datasets)
+# - Learning rates: May need adjustment for multi-hop training
 #
 # ============================================================================

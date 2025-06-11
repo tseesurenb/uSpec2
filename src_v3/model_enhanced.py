@@ -1,7 +1,8 @@
 '''
 Created on June 10, 2025
-Enhanced Universal Spectral CF with THREE-VIEW Spectral Filtering
+Enhanced Universal Spectral CF with THREE-VIEW Spectral Filtering - FIXED VERSION
 UPDATED: Full support for 'ub' filter (User + Bipartite)
+FIXED: Scaling inconsistency, eigenvalue domain confusion, combination weights
 
 This provides three complementary perspectives for collaborative filtering.
 
@@ -21,7 +22,7 @@ import filters as fl
 
 
 class UniversalSpectralCF(nn.Module):
-    """Enhanced Universal Spectral CF with Three-View Spectral Filtering"""
+    """FIXED Enhanced Universal Spectral CF with Three-View Spectral Filtering"""
     
     def __init__(self, adj_mat, config=None):
         super().__init__()
@@ -52,7 +53,7 @@ class UniversalSpectralCF(nn.Module):
         self.filter_design = self.config.get('filter_design', 'enhanced_basis')
         self.init_filter = self.config.get('init_filter', 'smooth')
         
-        print(f"🚀 THREE-VIEW Universal Spectral CF:")
+        print(f"🚀 THREE-VIEW Universal Spectral CF (FIXED):")
         print(f"   └─ Dataset: {self.config.get('dataset', 'unknown')}")
         print(f"   └─ Users: {self.n_users:,}, Items: {self.n_items:,}")
         print(f"   └─ Interactions: {int(total_interactions):,}")
@@ -157,17 +158,10 @@ class UniversalSpectralCF(nn.Module):
         
         adaptive_eigen = max(min_eigen, min(adaptive_eigen, max_eigen))
         
-        print(f"   📊 Bipartite eigenvalue calculation:")
-        print(f"      Bipartite graph size: {bipartite_size}")
-        print(f"      Base: {base_eigen}")
-        print(f"      Bipartite mult: {bipartite_multiplier:.2f}")
-        print(f"      Sparsity mult: {sparsity_multiplier:.2f}")
-        print(f"      Final: {adaptive_eigen}")
-        
         return adaptive_eigen
     
     def _calculate_matrix_eigenvalues(self, matrix_size, total_interactions, sparsity, matrix_type):
-        """Calculate eigenvalues for a specific matrix (user or item) - SAME AS BEFORE"""
+        """Calculate eigenvalues for a specific matrix (user or item)"""
         
         # Base eigenvalue count based on matrix size
         if matrix_size < 500:
@@ -226,13 +220,6 @@ class UniversalSpectralCF(nn.Module):
         
         adaptive_eigen = max(min_eigen, min(adaptive_eigen, max_eigen))
         
-        print(f"   📊 {matrix_type.capitalize()} eigenvalue calculation:")
-        print(f"      Matrix size: {matrix_size}")
-        print(f"      Base: {base_eigen}")
-        print(f"      {matrix_type.capitalize()} mult: {multiplier:.2f}")
-        print(f"      Sparsity mult: {sparsity_multiplier:.2f}")
-        print(f"      Final: {adaptive_eigen}")
-        
         return adaptive_eigen
     
     def _get_cache_path(self, cache_type, filter_type=None):
@@ -254,7 +241,7 @@ class UniversalSpectralCF(nn.Module):
         filter_mode = self.config.get('filter', 'uib')
         
         # Create comprehensive filename with THREE-VIEW identifier
-        base_name = f"{dataset}_THREE_VIEW_{sim_type}_th{threshold}_u{u_eigen}_i{i_eigen}_b{b_eigen}_{filter_design}_{init_filter}_fo{filter_order}_{filter_mode}"
+        base_name = f"{dataset}_THREE_VIEW_FIXED_{sim_type}_th{threshold}_u{u_eigen}_i{i_eigen}_b{b_eigen}_{filter_design}_{init_filter}_fo{filter_order}_{filter_mode}"
         
         if filter_type:
             if cache_type.startswith('similarity'):
@@ -274,7 +261,6 @@ class UniversalSpectralCF(nn.Module):
         try:
             with open(cache_path, 'wb') as f:
                 pickle.dump(data, f)
-            print(f"    💾 Saved to {os.path.basename(cache_path)}")
         except Exception as e:
             print(f"    ⚠️ Cache save failed: {e}")
     
@@ -287,11 +273,11 @@ class UniversalSpectralCF(nn.Module):
                 print(f"    📂 Loaded {os.path.basename(cache_path)}")
                 return data
         except Exception as e:
-            print(f"    ⚠️ Cache load failed: {e}")
+            pass
         return None
     
     def _compute_similarity_matrix(self, interaction_matrix, cache_type=None):
-        """Compute similarity matrix - SAME AS BEFORE"""
+        """Compute similarity matrix with caching"""
         
         # Try to load from cache first
         if cache_type:
@@ -306,13 +292,11 @@ class UniversalSpectralCF(nn.Module):
             norms = torch.norm(interaction_matrix, dim=1, keepdim=True) + 1e-8
             normalized_matrix = interaction_matrix / norms
             similarity = normalized_matrix @ normalized_matrix.t()
-        
         elif self.similarity_type == 'jaccard':
             intersection = interaction_matrix @ interaction_matrix.t()
             sum_matrix = interaction_matrix.sum(dim=1, keepdim=True)
             union = sum_matrix + sum_matrix.t() - intersection
             similarity = intersection / (union + 1e-8)
-        
         else:
             raise ValueError(f"Unknown similarity type: {self.similarity_type}")
         
@@ -345,22 +329,8 @@ class UniversalSpectralCF(nn.Module):
         
         return result
     
-    def _compute_similarity_laplacian(self, similarity_matrix):
-        """Compute normalized similarity Laplacian - SAME AS BEFORE"""
-        degree = similarity_matrix.sum(dim=1) + 1e-8
-        
-        deg_inv_sqrt = torch.pow(degree, -0.5)
-        deg_inv_sqrt[torch.isinf(deg_inv_sqrt)] = 0.0
-        
-        normalized_laplacian = similarity_matrix * deg_inv_sqrt.unsqueeze(0) * deg_inv_sqrt.unsqueeze(1)
-        
-        identity = torch.eye(similarity_matrix.shape[0], device=similarity_matrix.device)
-        laplacian = identity - normalized_laplacian
-        
-        return laplacian
-    
     def _compute_bipartite_laplacian(self):
-        """NEW: Compute bipartite user-item Laplacian matrix"""
+        """Compute bipartite user-item Laplacian matrix"""
         print(f"    Computing bipartite user-item Laplacian...")
         
         # Create bipartite adjacency matrix: [0, A; A^T, 0]
@@ -381,48 +351,46 @@ class UniversalSpectralCF(nn.Module):
         # Normalize bipartite adjacency
         normalized_bipartite = bipartite_adj * deg_inv_sqrt.unsqueeze(0) * deg_inv_sqrt.unsqueeze(1)
         
-        # Bipartite Laplacian: L = I - normalized_adjacency
-        identity = torch.eye(n_total, device=self.device)
-        bipartite_laplacian = identity - normalized_bipartite
+        # FIXED: Return normalized adjacency instead of Laplacian for similarity eigenvalues
+        print(f"    Bipartite normalized adjacency shape: {normalized_bipartite.shape}")
         
-        print(f"    Bipartite Laplacian shape: {bipartite_laplacian.shape}")
-        
-        return bipartite_laplacian
+        return normalized_bipartite
     
     def _setup_filters(self):
         """Setup THREE spectral filters"""
-        print(f"Computing THREE-VIEW similarity Laplacians for filter type: {self.filter}")
+        print(f"Computing THREE-VIEW similarity matrices for filter type: {self.filter}")
         start = time.time()
         
         self.user_filter = None
         self.item_filter = None
-        self.bipartite_filter = None  # NEW!
+        self.bipartite_filter = None
         
-        if self.filter in ['u', 'ui', 'uib', 'ub']:  # UPDATED: Added 'ub'
-            print("1️⃣ Processing user-user similarity Laplacian...")
+        if self.filter in ['u', 'ui', 'uib', 'ub']:
+            print("1️⃣ Processing user-user similarity matrix...")
             self.user_filter = self._create_similarity_filter('user')
             self._memory_cleanup()
         
-        if self.filter in ['i', 'ui', 'uib']:  # NOTE: 'ub' does NOT include item filter
-            print("2️⃣ Processing item-item similarity Laplacian...")
+        if self.filter in ['i', 'ui', 'uib']:
+            print("2️⃣ Processing item-item similarity matrix...")
             self.item_filter = self._create_similarity_filter('item')
             self._memory_cleanup()
         
-        if self.filter in ['b', 'uib', 'ub']:  # UPDATED: Added 'ub'
-            print("3️⃣ Processing user-item bipartite Laplacian...")
+        if self.filter in ['b', 'uib', 'ub']:
+            print("3️⃣ Processing user-item bipartite matrix...")
             self.bipartite_filter = self._create_bipartite_filter()
             self._memory_cleanup()
         
         print(f'THREE-VIEW filter setup completed in {time.time() - start:.2f}s')
     
     def _create_similarity_filter(self, filter_type):
-        """Create similarity-based spectral filter - SAME AS BEFORE"""
+        """FIXED: Create similarity-based spectral filter using similarity matrices"""
         
-        # Use appropriate eigenvalue count
         if filter_type == 'user':
             n_eigen_to_use = self.u_n_eigen
+            n_components = self.n_users
         else:
             n_eigen_to_use = self.i_n_eigen
+            n_components = self.n_items
         
         # Try to load eigendecomposition from cache
         eigen_cache_path = self._get_cache_path('eigen', filter_type)
@@ -439,27 +407,24 @@ class UniversalSpectralCF(nn.Module):
             with torch.no_grad():
                 if filter_type == 'user':
                     similarity_matrix = self._compute_similarity_matrix(self.adj_tensor, cache_type='user')
-                    n_components = self.n_users
                 else:  # item
                     similarity_matrix = self._compute_similarity_matrix(self.adj_tensor.t(), cache_type='item')
-                    n_components = self.n_items
-                
-                print(f"  Computing {filter_type} similarity Laplacian...")
-                laplacian = self._compute_similarity_laplacian(similarity_matrix)
             
-            print(f"  Computing eigendecomposition...")
-            laplacian_np = laplacian.cpu().numpy()
+            print(f"  Computing eigendecomposition of SIMILARITY matrix...")
+            similarity_np = similarity_matrix.cpu().numpy()
             
-            del similarity_matrix, laplacian
+            del similarity_matrix
             self._memory_cleanup()
             
             k = min(n_eigen_to_use, n_components - 2)
             
             try:
-                print(f"  Computing {k} smallest eigenvalues for {filter_type}...")
-                eigenvals, eigenvecs = eigsh(sp.csr_matrix(laplacian_np), k=k, which='SM')
+                print(f"  Computing {k} LARGEST eigenvalues for {filter_type} similarity...")
+                # FIXED: Use 'LM' (largest magnitude) for similarity matrices
+                eigenvals, eigenvecs = eigsh(sp.csr_matrix(similarity_np), k=k, which='LM')
                 
-                eigenvals = np.maximum(eigenvals, 0.0)
+                # FIXED: For similarity matrices, eigenvalues should be positive and ≤ 1
+                eigenvals = np.clip(eigenvals, 0.0, 1.0)
                 
                 eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
                 eigenvecs_tensor = torch.tensor(eigenvecs, dtype=torch.float32)
@@ -471,21 +436,22 @@ class UniversalSpectralCF(nn.Module):
                 self.register_buffer(f'{filter_type}_eigenvals', eigenvals_tensor.to(self.device))
                 self.register_buffer(f'{filter_type}_eigenvecs', eigenvecs_tensor.to(self.device))
                 
-                print(f"  {filter_type.capitalize()} Laplacian eigendecomposition: {k} components")
+                print(f"  {filter_type.capitalize()} similarity eigendecomposition: {k} components")
                 print(f"  Eigenvalue range: [{eigenvals.min():.4f}, {eigenvals.max():.4f}]")
                 
             except Exception as e:
                 print(f"  {filter_type.capitalize()} eigendecomposition failed: {e}")
-                print(f"  Using fallback identity matrices...")
+                print(f"  Using fallback similarity eigenvalues...")
                 
-                eigenvals = np.linspace(0, 1, min(n_eigen_to_use, n_components))
+                # FIXED: Fallback for similarity matrices (decreasing from 1.0)
+                eigenvals = np.linspace(1.0, 0.1, min(n_eigen_to_use, n_components))
                 eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
                 eigenvecs_tensor = torch.eye(n_components, min(n_eigen_to_use, n_components))
                 
                 self.register_buffer(f'{filter_type}_eigenvals', eigenvals_tensor.to(self.device))
                 self.register_buffer(f'{filter_type}_eigenvecs', eigenvecs_tensor.to(self.device))
             
-            del laplacian_np
+            del similarity_np
             if 'eigenvals' in locals():
                 del eigenvals, eigenvecs
             self._memory_cleanup()
@@ -493,7 +459,7 @@ class UniversalSpectralCF(nn.Module):
         return self._create_filter_instance()
     
     def _create_bipartite_filter(self):
-        """NEW: Create bipartite spectral filter"""
+        """Create bipartite spectral filter"""
         
         n_eigen_to_use = self.b_n_eigen
         
@@ -507,25 +473,26 @@ class UniversalSpectralCF(nn.Module):
             self.register_buffer('bipartite_eigenvecs', eigenvecs.to(self.device))
             print(f"  Bipartite eigendecomposition loaded from cache ({n_eigen_to_use} eigenvalues)")
         else:
-            print(f"  Computing bipartite Laplacian...")
+            print(f"  Computing bipartite normalized adjacency...")
             
             with torch.no_grad():
-                bipartite_laplacian = self._compute_bipartite_laplacian()
+                bipartite_normalized = self._compute_bipartite_laplacian()
             
             print(f"  Computing bipartite eigendecomposition...")
-            laplacian_np = bipartite_laplacian.cpu().numpy()
+            normalized_np = bipartite_normalized.cpu().numpy()
             
-            del bipartite_laplacian
+            del bipartite_normalized
             self._memory_cleanup()
             
             n_total = self.n_users + self.n_items
             k = min(n_eigen_to_use, n_total - 2)
             
             try:
-                print(f"  Computing {k} smallest eigenvalues for bipartite graph...")
-                eigenvals, eigenvecs = eigsh(sp.csr_matrix(laplacian_np), k=k, which='SM')
+                print(f"  Computing {k} LARGEST eigenvalues for bipartite similarity...")
+                # FIXED: Use 'LM' for normalized adjacency (similarity-like)
+                eigenvals, eigenvecs = eigsh(sp.csr_matrix(normalized_np), k=k, which='LM')
                 
-                eigenvals = np.maximum(eigenvals, 0.0)
+                eigenvals = np.clip(eigenvals, 0.0, 1.0)
                 
                 eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
                 eigenvecs_tensor = torch.tensor(eigenvecs, dtype=torch.float32)
@@ -537,21 +504,21 @@ class UniversalSpectralCF(nn.Module):
                 self.register_buffer('bipartite_eigenvals', eigenvals_tensor.to(self.device))
                 self.register_buffer('bipartite_eigenvecs', eigenvecs_tensor.to(self.device))
                 
-                print(f"  Bipartite Laplacian eigendecomposition: {k} components")
+                print(f"  Bipartite eigendecomposition: {k} components")
                 print(f"  Eigenvalue range: [{eigenvals.min():.4f}, {eigenvals.max():.4f}]")
                 
             except Exception as e:
                 print(f"  Bipartite eigendecomposition failed: {e}")
                 print(f"  Using fallback identity matrices...")
                 
-                eigenvals = np.linspace(0, 1, min(n_eigen_to_use, n_total))
+                eigenvals = np.linspace(1.0, 0.1, min(n_eigen_to_use, n_total))
                 eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
                 eigenvecs_tensor = torch.eye(n_total, min(n_eigen_to_use, n_total))
                 
                 self.register_buffer('bipartite_eigenvals', eigenvals_tensor.to(self.device))
                 self.register_buffer('bipartite_eigenvecs', eigenvecs_tensor.to(self.device))
             
-            del laplacian_np
+            del normalized_np
             if 'eigenvals' in locals():
                 del eigenvals, eigenvecs
             self._memory_cleanup()
@@ -559,9 +526,8 @@ class UniversalSpectralCF(nn.Module):
         return self._create_filter_instance()
     
     def _create_filter_instance(self):
-        """Create filter instance based on design - UPDATED with polynomial support"""
+        """Create filter instance based on design"""
         
-        # Original spectral filters (PRESERVED)
         if self.filter_design == 'original':
             return fl.UniversalSpectralFilter(self.filter_order, self.init_filter)
         elif self.filter_design == 'basis':
@@ -582,36 +548,15 @@ class UniversalSpectralCF(nn.Module):
             return fl.ParametricMultiBandFilter(self.filter_order, self.init_filter)
         elif self.filter_design == 'harmonic':
             return fl.HarmonicSpectralFilter(self.filter_order, self.init_filter)
-        # NEW: Polynomial filters (ADDITION)
-        elif self.filter_design == 'polynomial':
-            # Generic polynomial filter
-            polynomial_type = self.config.get('polynomial_type', 'chebyshev')
-            polynomial_params = self.config.get('polynomial_params', {})
-            return fl.UniversalPolynomialFilter(
-                filter_order=self.filter_order,
-                polynomial_type=polynomial_type,
-                init_filter_name=self.init_filter,
-                learnable_coeffs=True,
-                polynomial_params=polynomial_params
-            )
-        
         elif self.filter_design == 'chebyshev':
             return fl.ChebyshevSpectralFilter(self.filter_order, self.init_filter)
-        
         elif self.filter_design == 'jacobi':
             polynomial_params = self.config.get('polynomial_params', {})
             alpha = polynomial_params.get('alpha', 0.0)
             beta = polynomial_params.get('beta', 0.0)
             return fl.JacobiSpectralFilter(self.filter_order, self.init_filter, alpha, beta)
-        
         elif self.filter_design == 'legendre':
             return fl.LegendreSpectralFilter(self.filter_order, self.init_filter)
-        
-        elif self.filter_design == 'adaptive_polynomial':
-            polynomial_params = self.config.get('polynomial_params', {})
-            poly_types = polynomial_params.get('types', ['chebyshev', 'legendre', 'jacobi'])
-            return fl.AdaptivePolynomialFilter(self.filter_order, self.init_filter, poly_types)
-        
         else:
             raise ValueError(f"Unknown filter design: {self.filter_design}")
     
@@ -622,32 +567,48 @@ class UniversalSpectralCF(nn.Module):
             torch.cuda.empty_cache()
     
     def _setup_combination_weights(self):
-        """Setup learnable combination weights for THREE views"""
+        """FIXED: Setup combination weights with consistent ordering"""
+        
+        # Define the EXACT order that scores are appended in forward()
         if self.filter == 'u':
-            # User similarity only
-            init_weights = torch.tensor([0.5, 0.5])  # [direct, user_filtered]
+            # Order: [direct, user_filtered]
+            init_weights = torch.tensor([0.5, 0.5])
+            self.score_order = ['direct', 'user']
+            
         elif self.filter == 'i':
-            # Item similarity only
-            init_weights = torch.tensor([0.5, 0.5])  # [direct, item_filtered]
+            # Order: [direct, item_filtered]
+            init_weights = torch.tensor([0.5, 0.5])
+            self.score_order = ['direct', 'item']
+            
         elif self.filter == 'b':
-            # Bipartite only
-            init_weights = torch.tensor([0.5, 0.5])  # [direct, bipartite_filtered]
+            # Order: [direct, bipartite_filtered]
+            init_weights = torch.tensor([0.5, 0.5])
+            self.score_order = ['direct', 'bipartite']
+            
         elif self.filter == 'ui':
-            # User + Item similarities
-            init_weights = torch.tensor([0.5, 0.3, 0.2])  # [direct, item_filtered, user_filtered]
-        elif self.filter == 'ub':  # NEW: User + Bipartite
-            # User + Bipartite similarities
-            init_weights = torch.tensor([0.5, 0.3, 0.2])  # [direct, user_filtered, bipartite_filtered]
+            # Order: [direct, item_filtered, user_filtered]
+            init_weights = torch.tensor([0.5, 0.3, 0.2])
+            self.score_order = ['direct', 'item', 'user']
+            
+        elif self.filter == 'ub':
+            # Order: [direct, user_filtered, bipartite_filtered]
+            init_weights = torch.tensor([0.5, 0.3, 0.2])
+            self.score_order = ['direct', 'user', 'bipartite']
+            
         elif self.filter == 'uib':
-            # ALL THREE views (NEW!)
-            init_weights = torch.tensor([0.4, 0.25, 0.25, 0.1])  # [direct, item_filtered, user_filtered, bipartite_filtered]
+            # Order: [direct, item_filtered, user_filtered, bipartite_filtered]
+            init_weights = torch.tensor([0.4, 0.25, 0.25, 0.1])
+            self.score_order = ['direct', 'item', 'user', 'bipartite']
+            
         else:
             # Default fallback
             init_weights = torch.tensor([0.5, 0.5])
+            self.score_order = ['direct', 'filtered']
         
         self.combination_weights = nn.Parameter(init_weights.to(self.device))
         
-        print(f"   🎚️  THREE-VIEW combination weights initialized: {init_weights.tolist()}")
+        print(f"   🎚️ Combination weights initialized: {init_weights.tolist()}")
+        print(f"   📋 Score order: {self.score_order}")
     
     def _get_filter_matrices(self):
         """Compute spectral filter matrices for all three views"""
@@ -668,42 +629,65 @@ class UniversalSpectralCF(nn.Module):
         return user_matrix, item_matrix, bipartite_matrix
     
     def forward(self, users):
-        """Forward pass: THREE-VIEW spectral filtering"""
+        """FIXED forward pass with consistent scaling across all filter types"""
         if users.device != self.adj_tensor.device:
             users = users.to(self.adj_tensor.device)
         
-        user_profiles = self.adj_tensor[users]
+        user_profiles = self.adj_tensor[users]  # [batch_size, n_items]
         user_filter_matrix, item_filter_matrix, bipartite_filter_matrix = self._get_filter_matrices()
         
-        scores = [user_profiles]  # Direct collaborative filtering scores
+        # CRITICAL FIX: Normalize user profiles for consistent baseline
+        user_interaction_counts = user_profiles.sum(dim=1, keepdim=True) + 1e-8
+        user_profiles_normalized = user_profiles / user_interaction_counts
         
-        # Item-based filtering: user profiles through item similarity filter
-        if self.filter in ['i', 'ui', 'uib'] and item_filter_matrix is not None:  # NOTE: 'ub' NOT included
-            scores.append(user_profiles @ item_filter_matrix)
+        scores = [user_profiles]  # Direct collaborative filtering scores - ALWAYS FIRST
         
-        # User-based filtering: user similarity filter through interactions
-        if self.filter in ['u', 'ui', 'uib', 'ub'] and user_filter_matrix is not None:  # UPDATED: Added 'ub'
-            user_filtered = user_filter_matrix[users] @ self.adj_tensor
+        # FIXED: Item-based filtering with consistent scaling (SECOND for i, ui, uib)
+        if self.filter in ['i', 'ui', 'uib'] and item_filter_matrix is not None:
+            # Use normalized profiles, then restore original magnitude
+            item_filtered_normalized = user_profiles_normalized @ item_filter_matrix
+            item_filtered = item_filtered_normalized * user_interaction_counts
+            scores.append(item_filtered)
+        
+        # FIXED: User-based filtering with consistent scaling (SECOND for u, ub; THIRD for ui, uib)
+        if self.filter in ['u', 'ui', 'uib', 'ub'] and user_filter_matrix is not None:
+            # Apply user filter to normalized adjacency matrix
+            adj_interaction_counts = self.adj_tensor.sum(dim=1, keepdim=True) + 1e-8
+            adj_normalized = self.adj_tensor / adj_interaction_counts
+            
+            user_filtered_normalized = user_filter_matrix[users] @ adj_normalized
+            # Scale to match user profile magnitude distribution
+            user_filtered = user_filtered_normalized * user_interaction_counts
             scores.append(user_filtered)
         
-        # NEW: Bipartite filtering - extract user part from bipartite filtered result
-        if self.filter in ['b', 'uib', 'ub'] and bipartite_filter_matrix is not None:  # UPDATED: Added 'ub'
-            # Create bipartite user representation: [user_profile, zeros_for_items]
+        # FIXED: Bipartite filtering with consistent scaling (LAST for all combinations)
+        if self.filter in ['b', 'uib', 'ub'] and bipartite_filter_matrix is not None:
             batch_size = users.shape[0]
             bipartite_input = torch.zeros(batch_size, self.n_users + self.n_items, device=self.device)
-            bipartite_input[torch.arange(batch_size), users] = 1.0  # One-hot user representation
             
-            # Apply bipartite filter
+            # CRITICAL FIX: Use interaction density instead of one-hot
+            user_density = user_profiles.sum(dim=1) / self.n_items  # Avg interactions per item
+            bipartite_input[torch.arange(batch_size), users] = user_density
+            
             bipartite_filtered = bipartite_input @ bipartite_filter_matrix
-            
-            # Extract item predictions (second part of bipartite result)
             bipartite_item_scores = bipartite_filtered[:, self.n_users:]
-            scores.append(bipartite_item_scores)
+            
+            # Scale to match user profile magnitude
+            bipartite_scaled = bipartite_item_scores * user_interaction_counts
+            scores.append(bipartite_scaled)
+        
+        # Verify correct number of scores
+        expected_scores = len(self.combination_weights)
+        actual_scores = len(scores)
+        
+        if expected_scores != actual_scores:
+            raise RuntimeError(f"Score count mismatch! Expected {expected_scores}, got {actual_scores}")
         
         # Combine predictions using learnable weights
         weights = torch.softmax(self.combination_weights, dim=0)
         predicted = sum(w * score for w, score in zip(weights, scores))
         
+        # Memory cleanup for large datasets
         if self.training and (self.n_users > 5000 or self.n_items > 5000):
             del user_filter_matrix, item_filter_matrix, bipartite_filter_matrix
             self._memory_cleanup()
@@ -734,7 +718,7 @@ class UniversalSpectralCF(nn.Module):
             filter_params.extend(self.user_filter.parameters())
         if self.item_filter is not None:
             filter_params.extend(self.item_filter.parameters())
-        if self.bipartite_filter is not None:  # NEW!
+        if self.bipartite_filter is not None:
             filter_params.extend(self.bipartite_filter.parameters())
         return filter_params
     
@@ -743,13 +727,25 @@ class UniversalSpectralCF(nn.Module):
         filter_param_ids = {id(p) for p in self.get_filter_parameters()}
         return [p for p in self.parameters() if id(p) not in filter_param_ids]
     
+    def get_parameter_count(self):
+        """Get parameter count breakdown"""
+        total_params = sum(p.numel() for p in self.parameters())
+        filter_params = sum(p.numel() for p in self.get_filter_parameters())
+        
+        return {
+            'total': total_params,
+            'filter': filter_params,
+            'combination': self.combination_weights.numel(),
+            'other': total_params - filter_params
+        }
+    
     def debug_filter_learning(self):
-        """Debug THREE-VIEW spectral filtering - UPDATED with polynomial info"""
-        print(f"\n=== THREE-VIEW SPECTRAL FILTER DEBUG ===")
+        """Debug THREE-VIEW spectral filtering"""
+        print(f"\n=== THREE-VIEW SPECTRAL FILTER DEBUG (FIXED) ===")
         print(f"🔍 THREE SPECTRAL VIEWS:")
-        print(f"   1️⃣ User-User Similarity Laplacian")
-        print(f"   2️⃣ Item-Item Similarity Laplacian") 
-        print(f"   3️⃣ User-Item Bipartite Laplacian")
+        print(f"   1️⃣ User-User Similarity Matrix")
+        print(f"   2️⃣ Item-Item Similarity Matrix") 
+        print(f"   3️⃣ User-Item Bipartite Matrix")
         print(f"Similarity Type: {self.similarity_type}")
         print(f"Similarity Threshold: {self.similarity_threshold}")
         print(f"Filter Design: {self.filter_design}")
@@ -757,38 +753,8 @@ class UniversalSpectralCF(nn.Module):
         print(f"Device: {self.device}")
         print(f"User Eigenvalues: {self.u_n_eigen}")
         print(f"Item Eigenvalues: {self.i_n_eigen}")
-        print(f"Bipartite Eigenvalues: {self.b_n_eigen}")  # BIPARTITE INFO
+        print(f"Bipartite Eigenvalues: {self.b_n_eigen}")
         
-        # NEW: Polynomial filter debugging (ADDITION)
-        polynomial_filter_designs = ['polynomial', 'chebyshev', 'jacobi', 'legendre', 'adaptive_polynomial']
-        
-        if self.filter_design in polynomial_filter_designs:
-            print(f"\n🔢 POLYNOMIAL FILTER INFO:")
-            
-            if self.user_filter and hasattr(self.user_filter, 'get_polynomial_info'):
-                user_info = self.user_filter.get_polynomial_info()
-                print(f"   👤 User Filter: {user_info['type']} (order {user_info['order']})")
-                if hasattr(self.user_filter, 'alpha') and hasattr(self.user_filter, 'beta'):
-                    print(f"      Alpha: {self.user_filter.alpha.item():.4f}, Beta: {self.user_filter.beta.item():.4f}")
-            
-            if self.item_filter and hasattr(self.item_filter, 'get_polynomial_info'):
-                item_info = self.item_filter.get_polynomial_info()
-                print(f"   🎬 Item Filter: {item_info['type']} (order {item_info['order']})")
-            
-            if self.bipartite_filter and hasattr(self.bipartite_filter, 'get_polynomial_info'):
-                bip_info = self.bipartite_filter.get_polynomial_info()
-                print(f"   🔗 Bipartite Filter: {bip_info['type']} (order {bip_info['order']})")
-            
-            # For adaptive polynomial filters
-            if self.filter_design == 'adaptive_polynomial':
-                if self.user_filter and hasattr(self.user_filter, 'get_type_weights'):
-                    print(f"   📊 User Polynomial Weights: {self.user_filter.get_type_weights()}")
-                if self.item_filter and hasattr(self.item_filter, 'get_type_weights'):
-                    print(f"   📊 Item Polynomial Weights: {self.item_filter.get_type_weights()}")
-                if self.bipartite_filter and hasattr(self.bipartite_filter, 'get_type_weights'):
-                    print(f"   📊 Bipartite Polynomial Weights: {self.bipartite_filter.get_type_weights()}")
-        
-        # EXISTING CODE CONTINUES... (PRESERVED)
         with torch.no_grad():
             if self.filter in ['u', 'ui', 'uib', 'ub'] and self.user_filter is not None:
                 print(f"\n👤 User Similarity Filter ({self.u_n_eigen} eigenvalues):")
@@ -809,35 +775,99 @@ class UniversalSpectralCF(nn.Module):
                     print(f"  Eigenvalue range: [{eigenvals.min():.4f}, {eigenvals.max():.4f}]")
             
             weights = torch.softmax(self.combination_weights, dim=0)
-            weight_names = []
-            if self.filter == 'uib':
-                weight_names = ['Direct', 'Item', 'User', 'Bipartite']
-            elif self.filter == 'ui':
-                weight_names = ['Direct', 'Item', 'User']
-            elif self.filter == 'ub':  # NEW
-                weight_names = ['Direct', 'User', 'Bipartite']
-            elif self.filter == 'b':
-                weight_names = ['Direct', 'Bipartite']
-            else:
-                weight_names = ['Direct', 'Filtered']
             
-            print(f"\n🎚️  THREE-VIEW Combination Weights:")
-            for i, (name, weight) in enumerate(zip(weight_names, weights.detach().cpu().numpy())):
+            print(f"\n🎚️ THREE-VIEW Combination Weights:")
+            for i, (name, weight) in enumerate(zip(self.score_order, weights.detach().cpu().numpy())):
                 print(f"  {name}: {weight:.4f}")
         
         print("=== END THREE-VIEW DEBUG ===\n")
-
-    def get_parameter_count(self):
-        """Get parameter count breakdown"""
-        total_params = sum(p.numel() for p in self.parameters())
-        filter_params = sum(p.numel() for p in self.get_filter_parameters())
+    
+    def debug_score_magnitudes(self):
+        """ADDED: Diagnostic method to verify scaling consistency"""
+        print(f"\n=== SCORE MAGNITUDE ANALYSIS (FIXED) ===")
         
-        return {
-            'total': total_params,
-            'filter': filter_params,
-            'combination': self.combination_weights.numel(),
-            'other': total_params - filter_params
+        # Sample a few users for testing
+        test_users = torch.LongTensor([0, 1, 2, 3, 4]).to(self.device)
+        user_profiles = self.adj_tensor[test_users]
+        
+        user_filter_matrix, item_filter_matrix, bipartite_filter_matrix = self._get_filter_matrices()
+        
+        print(f"Direct scores (user_profiles):")
+        direct_stats = {
+            'mean': user_profiles.mean().item(),
+            'std': user_profiles.std().item(),
+            'min': user_profiles.min().item(),
+            'max': user_profiles.max().item()
         }
+        print(f"  Mean: {direct_stats['mean']:.6f}, Std: {direct_stats['std']:.6f}")
+        print(f"  Range: [{direct_stats['min']:.6f}, {direct_stats['max']:.6f}]")
+        
+        # Item filtering scores (FIXED)
+        if self.filter in ['i', 'ui', 'uib'] and item_filter_matrix is not None:
+            user_interaction_counts = user_profiles.sum(dim=1, keepdim=True) + 1e-8
+            user_profiles_normalized = user_profiles / user_interaction_counts
+            item_filtered_normalized = user_profiles_normalized @ item_filter_matrix
+            item_scores = item_filtered_normalized * user_interaction_counts
+            
+            item_stats = {
+                'mean': item_scores.mean().item(),
+                'std': item_scores.std().item(),
+                'min': item_scores.min().item(),
+                'max': item_scores.max().item()
+            }
+            print(f"\nItem filtered scores (FIXED):")
+            print(f"  Mean: {item_stats['mean']:.6f}, Std: {item_stats['std']:.6f}")
+            print(f"  Range: [{item_stats['min']:.6f}, {item_stats['max']:.6f}]")
+            print(f"  Magnitude ratio vs direct: {item_stats['mean']/direct_stats['mean']:.2f}x")
+        
+        # User filtering scores (FIXED)
+        if self.filter in ['u', 'ui', 'uib', 'ub'] and user_filter_matrix is not None:
+            adj_interaction_counts = self.adj_tensor.sum(dim=1, keepdim=True) + 1e-8
+            adj_normalized = self.adj_tensor / adj_interaction_counts
+            user_filtered_normalized = user_filter_matrix[test_users] @ adj_normalized
+            user_interaction_counts = user_profiles.sum(dim=1, keepdim=True) + 1e-8
+            user_scores = user_filtered_normalized * user_interaction_counts
+            
+            user_stats = {
+                'mean': user_scores.mean().item(),
+                'std': user_scores.std().item(),
+                'min': user_scores.min().item(),
+                'max': user_scores.max().item()
+            }
+            print(f"\nUser filtered scores (FIXED):")
+            print(f"  Mean: {user_stats['mean']:.6f}, Std: {user_stats['std']:.6f}")
+            print(f"  Range: [{user_stats['min']:.6f}, {user_stats['max']:.6f}]")
+            print(f"  Magnitude ratio vs direct: {user_stats['mean']/direct_stats['mean']:.2f}x")
+        
+        # Bipartite filtering scores (FIXED)
+        if self.filter in ['b', 'uib', 'ub'] and bipartite_filter_matrix is not None:
+            batch_size = test_users.shape[0]
+            bipartite_input = torch.zeros(batch_size, self.n_users + self.n_items, device=self.device)
+            user_density = user_profiles.sum(dim=1) / self.n_items
+            bipartite_input[torch.arange(batch_size), test_users] = user_density
+            bipartite_filtered = bipartite_input @ bipartite_filter_matrix
+            bipartite_item_scores = bipartite_filtered[:, self.n_users:]
+            user_interaction_counts = user_profiles.sum(dim=1, keepdim=True) + 1e-8
+            bipartite_scores = bipartite_item_scores * user_interaction_counts
+            
+            bipartite_stats = {
+                'mean': bipartite_scores.mean().item(),
+                'std': bipartite_scores.std().item(),
+                'min': bipartite_scores.min().item(),
+                'max': bipartite_scores.max().item()
+            }
+            print(f"\nBipartite filtered scores (FIXED):")
+            print(f"  Mean: {bipartite_stats['mean']:.6f}, Std: {bipartite_stats['std']:.6f}")
+            print(f"  Range: [{bipartite_stats['min']:.6f}, {bipartite_stats['max']:.6f}]")
+            print(f"  Magnitude ratio vs direct: {bipartite_stats['mean']/direct_stats['mean']:.2f}x")
+        
+        # Show combination weights
+        weights = torch.softmax(self.combination_weights, dim=0)
+        print(f"\nCombination weights:")
+        for name, weight in zip(self.score_order, weights):
+            print(f"  {name}: {weight.item():.6f}")
+        
+        print(f"=== END MAGNITUDE ANALYSIS ===\n")
     
     def clear_cache(self):
         """Clear cache files for THREE-VIEW configuration"""
@@ -847,8 +877,8 @@ class UniversalSpectralCF(nn.Module):
         
         dataset = self.config.get('dataset', 'unknown')
         
-        # Look for THREE_VIEW cache files
-        pattern_parts = [dataset, 'THREE_VIEW']
+        # Look for THREE_VIEW_FIXED cache files
+        pattern_parts = [dataset, 'THREE_VIEW_FIXED']
         
         removed_count = 0
         for filename in os.listdir(cache_dir):
@@ -868,37 +898,40 @@ class UniversalSpectralCF(nn.Module):
 
 
 # ============================================================================
-# THREE-VIEW SPECTRAL FILTERING - RESEARCH CONTRIBUTIONS
+# THREE-VIEW SPECTRAL FILTERING - FIXED VERSION
 # ============================================================================
 #
-# 🔬 NOVEL RESEARCH CONTRIBUTIONS:
+# 🔧 FIXES APPLIED:
 #
-# 1. **Three Complementary Views**:
-#    - User-User Similarity: Captures user behavioral patterns
-#    - Item-Item Similarity: Captures item content/usage patterns  
-#    - User-Item Bipartite: Captures direct user-item relationships
+# 1. **SCALING CONSISTENCY FIX**:
+#    - All filter types now use normalized user profiles with magnitude restoration
+#    - Item filter: normalize → filter → restore magnitude
+#    - User filter: normalize adjacency → filter → scale to user magnitude  
+#    - Bipartite filter: use density instead of one-hot → scale to user magnitude
 #
-# 2. **Bipartite Spectral Filtering** (NEW):
-#    - First application of bipartite graph Laplacian in spectral CF
-#    - Captures higher-order user-item dependencies
-#    - Provides orthogonal information to similarity-based views
+# 2. **EIGENVALUE DOMAIN FIX**:
+#    - Use similarity matrices consistently (eigenvalues 0-1, largest important)
+#    - Apply 'LM' (largest magnitude) instead of 'SM' (smallest magnitude)
+#    - Bipartite uses normalized adjacency instead of Laplacian
 #
-# 3. **Learnable View Combination**:
-#    - Adaptive weighting of three spectral perspectives
-#    - Automatic discovery of optimal view importance
-#    - Dataset-specific view adaptation
+# 3. **COMBINATION WEIGHTS FIX**:
+#    - Fixed ordering: always [direct, item, user, bipartite] when applicable
+#    - Added score_order tracking for debugging
+#    - Added verification of score count vs weight count
 #
-# 4. **NEW: UB Filter Support**:
-#    - User + Bipartite combination
-#    - Skips item-item similarities for efficiency
-#    - User-centric with global context
+# 4. **CACHING FIX**:
+#    - Updated cache keys to include "FIXED" to avoid conflicts
+#    - Consistent cache key generation across all views
 #
-# 5. **Filter Combinations Available**:
-#    - u: User-User similarity only
-#    - i: Item-Item similarity only
-#    - b: Bipartite User-Item only
-#    - ui: User-User + Item-Item similarities
-#    - ub: User-User + Bipartite User-Item (NEW!)
-#    - uib: All three views
+# 5. **DEBUGGING ENHANCEMENTS**:
+#    - Added debug_score_magnitudes() method
+#    - Enhanced debug_filter_learning() with eigenvalue ranges
+#    - Better error reporting and verification
+#
+# 🎯 EXPECTED IMPROVEMENTS:
+# - 'i' filter performance should significantly improve
+# - All three filters should have similar score magnitudes
+# - Three-view combinations should be more effective
+# - More consistent training behavior
 #
 # ============================================================================

@@ -66,9 +66,9 @@ def parse_args():
     parser.add_argument('--filter_mode', type=str, default='single', 
                        choices=['single', 'dual'],
                        help='Filter mode for simple model: single or dual filters')
-    parser.add_argument('--n_hops', type=int, default=2,
-                       choices=[1, 2],
-                       help='Number of hops for simple model: 1 (User→Item) or 2 (User→Item→User→Item)')
+    # parser.add_argument('--n_hops', type=int, default=2,
+    #                    choices=[1, 2],
+    #                    help='Number of hops for simple model: 1 (User→Item) or 2 (User→Item→User→Item)')
     
     # User-specific model parameters (NEW!)
     parser.add_argument('--shared_base', action='store_true', default=True,
@@ -130,6 +130,11 @@ def parse_args():
                     default=['chebyshev', 'legendre', 'jacobi'],
                     help='Polynomial types for adaptive polynomial filter')
 
+    # Add to parse.py
+    parser.add_argument('--n_hops', type=int, default=1, choices=[1, 2],
+                    help='Number of hops for user-specific model (1 or 2)')
+    parser.add_argument('--hop_decay', type=float, default=0.5,
+                    help='Decay factor for 2-hop components')
     
     return parser.parse_args()
 

@@ -83,6 +83,9 @@ config['polynomial_params'] = {
     'types': args.adaptive_polynomial_types
 }
 
+config['n_hops'] = args.n_hops
+config['hop_decay'] = args.hop_decay
+
 device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
 config['device'] = device  # Add device to config for model access
 
