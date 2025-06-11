@@ -1,9 +1,6 @@
 '''
 Created on June 10, 2025
 Enhanced Universal Spectral CF with THREE-VIEW Spectral Filtering
-1. User-User Similarity Laplacian
-2. Item-Item Similarity Laplacian  
-3. User-Item Bipartite Laplacian (NEW!)
 
 This provides three complementary perspectives for collaborative filtering.
 
@@ -560,7 +557,9 @@ class UniversalSpectralCF(nn.Module):
         return self._create_filter_instance()
     
     def _create_filter_instance(self):
-        """Create filter instance based on design"""
+        """Create filter instance based on design - UPDATED with polynomial support"""
+        
+        # Original spectral filters (PRESERVED)
         if self.filter_design == 'original':
             return fl.UniversalSpectralFilter(self.filter_order, self.init_filter)
         elif self.filter_design == 'basis':
@@ -581,6 +580,36 @@ class UniversalSpectralCF(nn.Module):
             return fl.ParametricMultiBandFilter(self.filter_order, self.init_filter)
         elif self.filter_design == 'harmonic':
             return fl.HarmonicSpectralFilter(self.filter_order, self.init_filter)
+        # NEW: Polynomial filters (ADDITION)
+        elif self.filter_design == 'polynomial':
+            # Generic polynomial filter
+            polynomial_type = self.config.get('polynomial_type', 'chebyshev')
+            polynomial_params = self.config.get('polynomial_params', {})
+            return fl.UniversalPolynomialFilter(
+                filter_order=self.filter_order,
+                polynomial_type=polynomial_type,
+                init_filter_name=self.init_filter,
+                learnable_coeffs=True,
+                polynomial_params=polynomial_params
+            )
+        
+        elif self.filter_design == 'chebyshev':
+            return fl.ChebyshevSpectralFilter(self.filter_order, self.init_filter)
+        
+        elif self.filter_design == 'jacobi':
+            polynomial_params = self.config.get('polynomial_params', {})
+            alpha = polynomial_params.get('alpha', 0.0)
+            beta = polynomial_params.get('beta', 0.0)
+            return fl.JacobiSpectralFilter(self.filter_order, self.init_filter, alpha, beta)
+        
+        elif self.filter_design == 'legendre':
+            return fl.LegendreSpectralFilter(self.filter_order, self.init_filter)
+        
+        elif self.filter_design == 'adaptive_polynomial':
+            polynomial_params = self.config.get('polynomial_params', {})
+            poly_types = polynomial_params.get('types', ['chebyshev', 'legendre', 'jacobi'])
+            return fl.AdaptivePolynomialFilter(self.filter_order, self.init_filter, poly_types)
+        
         else:
             raise ValueError(f"Unknown filter design: {self.filter_design}")
     
@@ -710,7 +739,7 @@ class UniversalSpectralCF(nn.Module):
         return [p for p in self.parameters() if id(p) not in filter_param_ids]
     
     def debug_filter_learning(self):
-        """Debug THREE-VIEW spectral filtering"""
+        """Debug THREE-VIEW spectral filtering - UPDATED with polynomial info"""
         print(f"\n=== THREE-VIEW SPECTRAL FILTER DEBUG ===")
         print(f"🔍 THREE SPECTRAL VIEWS:")
         print(f"   1️⃣ User-User Similarity Laplacian")
@@ -724,6 +753,36 @@ class UniversalSpectralCF(nn.Module):
         print(f"Item Eigenvalues: {self.i_n_eigen}")
         print(f"Bipartite Eigenvalues: {self.b_n_eigen}")
         
+        # NEW: Polynomial filter debugging (ADDITION)
+        polynomial_filter_designs = ['polynomial', 'chebyshev', 'jacobi', 'legendre', 'adaptive_polynomial']
+        
+        if self.filter_design in polynomial_filter_designs:
+            print(f"\n🔢 POLYNOMIAL FILTER INFO:")
+            
+            if self.user_filter and hasattr(self.user_filter, 'get_polynomial_info'):
+                user_info = self.user_filter.get_polynomial_info()
+                print(f"   👤 User Filter: {user_info['type']} (order {user_info['order']})")
+                if hasattr(self.user_filter, 'alpha') and hasattr(self.user_filter, 'beta'):
+                    print(f"      Alpha: {self.user_filter.alpha.item():.4f}, Beta: {self.user_filter.beta.item():.4f}")
+            
+            if self.item_filter and hasattr(self.item_filter, 'get_polynomial_info'):
+                item_info = self.item_filter.get_polynomial_info()
+                print(f"   🎬 Item Filter: {item_info['type']} (order {item_info['order']})")
+            
+            if self.bipartite_filter and hasattr(self.bipartite_filter, 'get_polynomial_info'):
+                bip_info = self.bipartite_filter.get_polynomial_info()
+                print(f"   🔗 Bipartite Filter: {bip_info['type']} (order {bip_info['order']})")
+            
+            # For adaptive polynomial filters
+            if self.filter_design == 'adaptive_polynomial':
+                if self.user_filter and hasattr(self.user_filter, 'get_type_weights'):
+                    print(f"   📊 User Polynomial Weights: {self.user_filter.get_type_weights()}")
+                if self.item_filter and hasattr(self.item_filter, 'get_type_weights'):
+                    print(f"   📊 Item Polynomial Weights: {self.item_filter.get_type_weights()}")
+                if self.bipartite_filter and hasattr(self.bipartite_filter, 'get_type_weights'):
+                    print(f"   📊 Bipartite Polynomial Weights: {self.bipartite_filter.get_type_weights()}")
+        
+        # EXISTING CODE CONTINUES... (PRESERVED)
         with torch.no_grad():
             if self.filter in ['u', 'ui', 'uib'] and self.user_filter is not None:
                 print(f"\n👤 User Similarity Filter ({self.u_n_eigen} eigenvalues):")

@@ -364,3 +364,262 @@ python main.py \
     --epochs 50 \
     --patience 10
 ```
+
+#!/bin/bash
+
+# =============================================================================
+# POLYNOMIAL FILTER USAGE EXAMPLES
+# All existing filter designs continue to work exactly as before!
+# =============================================================================
+
+echo "🔢 POLYNOMIAL FILTER EXAMPLES FOR ENHANCED MODEL"
+echo "All existing filters (enhanced_basis, multiscale, etc.) still work!"
+echo ""
+
+# =============================================================================
+# 1. CHEBYSHEV POLYNOMIAL FILTER (Most Common)
+# =============================================================================
+
+echo "1️⃣ Chebyshev Polynomial Filter:"
+python main.py \
+    --model_type enhanced \
+    --dataset ml-100k \
+    --filter_design chebyshev \
+    --u_n_eigen 48 \
+    --i_n_eigen 64 \
+    --init_filter smooth \
+    --lr 0.001 \
+    --decay 0.01
+
+# =============================================================================
+# 2. JACOBI POLYNOMIAL FILTER (Learnable Parameters)
+# =============================================================================
+
+echo "2️⃣ Jacobi Polynomial Filter with Learnable α, β:"
+python main.py \
+    --model_type enhanced \
+    --dataset ml-100k \
+    --filter_design jacobi \
+    --polynomial_alpha 0.5 \
+    --polynomial_beta -0.5 \
+    --u_n_eigen 48 \
+    --i_n_eigen 64 \
+    --init_filter golden_036 \
+    --lr 0.001 \
+    --decay 0.01
+
+# =============================================================================
+# 3. GENERIC POLYNOMIAL FILTER (Specify Type)
+# =============================================================================
+
+echo "3️⃣ Generic Polynomial Filter (Laguerre):"
+python main.py \
+    --model_type enhanced \
+    --dataset ml-100k \
+    --filter_design polynomial \
+    --polynomial_type laguerre \
+    --polynomial_alpha 1.0 \
+    --u_n_eigen 48 \
+    --i_n_eigen 64 \
+    --init_filter butterworth \
+    --lr 0.001 \
+    --decay 0.01
+
+# =============================================================================
+# 4. ADAPTIVE POLYNOMIAL FILTER (Learns Best Combination)
+# =============================================================================
+
+echo "4️⃣ Adaptive Polynomial Filter:"
+python main.py \
+    --model_type enhanced \
+    --dataset ml-100k \
+    --filter_design adaptive_polynomial \
+    --adaptive_polynomial_types chebyshev legendre jacobi hermite \
+    --u_n_eigen 48 \
+    --i_n_eigen 64 \
+    --init_filter smooth \
+    --lr 0.001 \
+    --decay 0.01
+
+# =============================================================================
+# 5. LEGENDRE POLYNOMIAL FILTER
+# =============================================================================
+
+echo "5️⃣ Legendre Polynomial Filter:"
+python main.py \
+    --model_type enhanced \
+    --dataset gowalla \
+    --filter_design legendre \
+    --u_n_eigen 128 \
+    --i_n_eigen 256 \
+    --init_filter smooth \
+    --lr 0.001 \
+    --decay 0.01
+
+# =============================================================================
+# 6. THREE-VIEW WITH POLYNOMIAL FILTERS
+# =============================================================================
+
+echo "6️⃣ Three-View Model with Polynomial Filters:"
+python main.py \
+    --model_type enhanced \
+    --dataset ml-100k \
+    --filter uib \
+    --filter_design chebyshev \
+    --u_n_eigen 48 \
+    --i_n_eigen 64 \
+    --b_n_eigen 80 \
+    --init_filter smooth \
+    --lr 0.001 \
+    --decay 0.01
+
+# =============================================================================
+# 7. EXISTING FILTERS STILL WORK (NO CHANGES NEEDED)
+# =============================================================================
+
+echo "7️⃣ Existing Enhanced Basis Filter (unchanged):"
+python main.py \
+    --model_type enhanced \
+    --dataset ml-100k \
+    --filter_design enhanced_basis \
+    --u_n_eigen 48 \
+    --i_n_eigen 64 \
+    --init_filter smooth \
+    --lr 0.001 \
+    --decay 0.01
+
+echo "8️⃣ Existing Ensemble Filter (unchanged):"
+python main.py \
+    --model_type enhanced \
+    --dataset gowalla \
+    --filter_design ensemble \
+    --u_n_eigen 128 \
+    --i_n_eigen 256 \
+    --lr 0.001 \
+    --decay 0.01
+
+# =============================================================================
+# PYTHON USAGE EXAMPLES
+# =============================================================================
+
+cat << 'EOF'
+
+🐍 PYTHON API USAGE EXAMPLES:
+
+```python
+import torch
+from model_enhanced import UniversalSpectralCF
+
+# Example 1: Chebyshev Filter
+config = {
+    'dataset': 'ml-100k',
+    'filter_design': 'chebyshev',
+    'u_n_eigen': 48,
+    'i_n_eigen': 64,
+    'init_filter': 'smooth',
+    'filter_order': 6
+}
+model = UniversalSpectralCF(adj_matrix, config)
+
+# Example 2: Jacobi Filter with Custom Parameters
+config = {
+    'dataset': 'ml-100k',
+    'filter_design': 'jacobi',
+    'polynomial_params': {'alpha': 0.5, 'beta': -0.5},
+    'u_n_eigen': 48,
+    'i_n_eigen': 64,
+    'init_filter': 'golden_036'
+}
+model = UniversalSpectralCF(adj_matrix, config)
+
+# Example 3: Generic Polynomial Filter
+config = {
+    'dataset': 'gowalla',
+    'filter_design': 'polynomial',
+    'polynomial_type': 'hermite',
+    'u_n_eigen': 128,
+    'i_n_eigen': 256,
+    'init_filter': 'smooth'
+}
+model = UniversalSpectralCF(adj_matrix, config)
+
+# Example 4: Adaptive Polynomial Filter
+config = {
+    'dataset': 'ml-100k',
+    'filter_design': 'adaptive_polynomial',
+    'polynomial_params': {
+        'types': ['chebyshev', 'legendre', 'jacobi', 'laguerre']
+    },
+    'u_n_eigen': 48,
+    'i_n_eigen': 64
+}
+model = UniversalSpectralCF(adj_matrix, config)
+
+# Check what polynomial types were learned as most important
+if hasattr(model.user_filter, 'get_type_weights'):
+    print("Learned polynomial type weights:", model.user_filter.get_type_weights())
+```
+
+🔍 DEBUGGING POLYNOMIAL FILTERS:
+
+```python
+# After training, debug polynomial filter learning:
+model.debug_filter_learning()
+
+# For Jacobi filters, check learned parameters:
+if hasattr(model.user_filter, 'alpha'):
+    print(f"Learned α: {model.user_filter.alpha.item():.4f}")
+    print(f"Learned β: {model.user_filter.beta.item():.4f}")
+
+# For adaptive polynomial filters, check type importance:
+if hasattr(model.user_filter, 'get_type_weights'):
+    weights = model.user_filter.get_type_weights()
+    print("Polynomial type importance:")
+    for poly_type, weight in sorted(weights.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {poly_type}: {weight:.3f}")
+```
+
+🎯 FILTER DESIGN COMPARISON:
+
+All these filter designs are now available:
+
+EXISTING (PRESERVED):
+- 'original'              # Original universal filter
+- 'basis'                # Basis filter combination  
+- 'enhanced_basis'       # Enhanced basis (default)
+- 'adaptive_golden'      # Golden ratio adaptive
+- 'multiscale'           # Multi-scale filtering
+- 'ensemble'             # Ensemble of multiple filters
+- 'band_stop'            # Band-stop frequency filter
+- 'adaptive_band_stop'   # Adaptive band-stop
+- 'parametric_multi_band' # Parametric multi-band
+- 'harmonic'             # Harmonic series filter
+
+NEW POLYNOMIAL FILTERS:
+- 'polynomial'           # Generic (specify polynomial_type)
+- 'chebyshev'           # Chebyshev polynomials
+- 'jacobi'              # Jacobi polynomials (learnable α, β)
+- 'legendre'            # Legendre polynomials
+- 'adaptive_polynomial' # Learns best polynomial combination
+
+📊 EXPECTED PERFORMANCE:
+
+Based on spectral filtering theory:
+- Chebyshev: Excellent for most datasets (proven effectiveness)
+- Jacobi: Flexible, can adapt α,β parameters to data characteristics
+- Legendre: Good alternative to Chebyshev, orthogonal on [-1,1]
+- Adaptive: Automatically finds best polynomial combination
+
+🔬 RESEARCH APPLICATIONS:
+
+1. Compare polynomial families on your dataset
+2. Study how α,β parameters evolve during training
+3. Analyze which polynomial types adaptive filter prefers
+4. Investigate spectral properties of different bases
+
+EOF
+
+echo ""
+echo "✅ All examples preserve existing functionality!"
+echo "🔢 New polynomial filters are additions, not replacements!"
+echo "🚀 Use your existing commands - they all still work!"

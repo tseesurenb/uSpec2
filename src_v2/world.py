@@ -1,7 +1,7 @@
 '''
 Created on June 7, 2025
 PyTorch Implementation of uSpec: Universal Spectral Collaborative Filtering
-Enhanced with three-view bipartite configuration support
+Enhanced with user-specific model configuration support
 
 @author: Tseesuren Batsuuri (tseesuren.batsuuri@hdr.mq.edu.au)
 '''
@@ -33,14 +33,14 @@ config['min_delta'] = args.min_delta
 config['n_epoch_eval'] = args.n_epoch_eval
 config['m_type'] = args.m_type
 
-# Model selection - UPDATED
+# Model selection - UPDATED WITH USER-SPECIFIC MODEL
 config['model_type'] = args.model_type
 
 # Enhanced eigenvalue configuration with three-view support
 config['n_eigen'] = args.n_eigen  # Legacy support
 config['u_n_eigen'] = args.u_n_eigen  # User eigenvalue count
 config['i_n_eigen'] = args.i_n_eigen  # Item eigenvalue count
-config['b_n_eigen'] = args.b_n_eigen  # Bipartite eigenvalue count (NEW!)
+config['b_n_eigen'] = args.b_n_eigen  # Bipartite eigenvalue count
 
 # Filter design options (only used with enhanced model)
 config['filter_design'] = args.filter_design
@@ -49,6 +49,11 @@ config['init_filter'] = args.init_filter
 # Simple model specific parameters
 config['filter_mode'] = args.filter_mode
 config['n_hops'] = args.n_hops
+
+# User-specific model parameters (NEW!)
+config['shared_base'] = args.shared_base
+config['personalization_dim'] = args.personalization_dim
+config['cold_start_strategy'] = args.cold_start_strategy
 
 # Laplacian-specific configuration (legacy)
 config['use_laplacian'] = args.use_laplacian
@@ -59,6 +64,14 @@ config['use_similarity_norm'] = args.use_similarity_norm
 config['similarity_type'] = args.similarity_type
 config['similarity_threshold'] = args.similarity_threshold
 config['similarity_weight'] = args.similarity_weight
+
+# Polynomial filter parameters
+config['polynomial_type'] = args.polynomial_type
+config['polynomial_params'] = {
+    'alpha': args.polynomial_alpha,
+    'beta': args.polynomial_beta,
+    'types': args.adaptive_polynomial_types
+}
 
 device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
 config['device'] = device  # Add device to config for model access

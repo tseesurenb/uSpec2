@@ -17,38 +17,132 @@ import os
 import pickle
 import world
 
+# class UniversalSpectralFilter(nn.Module):
+#     def __init__(self, filter_order=3):
+#         super().__init__()
+#         self.filter_order = filter_order
+
+#         # Initialize coefficients based on a smooth low-pass filter
+#         smooth_lowpass = [1.0, -0.5, 0.1, -0.02, 0.004, -0.0008, 0.00015, -0.00003]
+#         coeffs_data = torch.zeros(filter_order + 1)
+#         for i, val in enumerate(smooth_lowpass[:filter_order + 1]):
+#             coeffs_data[i] = val
+        
+#         self.coeffs = nn.Parameter(coeffs_data)
+    
+#     def forward(self, eigenvalues):
+#         """Apply learnable spectral filter using Chebyshev polynomials"""
+#         # Normalize eigenvalues to [-1, 1]
+#         max_eigenval = torch.max(eigenvalues) + 1e-8
+#         x = 2 * (eigenvalues / max_eigenval) - 1
+        
+#         # Compute Chebyshev polynomial response
+#         result = self.coeffs[0] * torch.ones_like(x)
+        
+#         if len(self.coeffs) > 1:
+#             T_prev, T_curr = torch.ones_like(x), x
+#             result += self.coeffs[1] * T_curr
+            
+#             for i in range(2, len(self.coeffs)):
+#                 T_next = 2 * x * T_curr - T_prev
+#                 result += self.coeffs[i] * T_next
+#                 T_prev, T_curr = T_curr, T_next
+        
+#         return torch.exp(-torch.abs(result)) + 1e-6
+
+import torch
+import torch.nn as nn
+
+# Chebyshev filter
+# filter_cheb = UniversalSpectralFilter(filter_order=4, basis_type="chebyshev")
+
+# Legendre filter
+# filter_leg = UniversalSpectralFilter(filter_order=4, basis_type="legendre")
+
+# Jacobi filter (e.g., alpha=0.5, beta=0.5)
+# filter_jacobi = UniversalSpectralFilter(filter_order=4, basis_type="jacobi", alpha=0.5, beta=0.5)
+
 class UniversalSpectralFilter(nn.Module):
-    def __init__(self, filter_order=3):
+    def __init__(self, filter_order=3, basis_type="jacobi", alpha=0.5, beta=0.5):
+        """
+        basis_type: 'chebyshev', 'legendre', or 'jacobi'
+        alpha, beta: only used for Jacobi polynomials
+        """
         super().__init__()
         self.filter_order = filter_order
+        self.basis_type = basis_type.lower()
+        self.alpha = alpha
+        self.beta = beta
 
-        # Initialize coefficients based on a smooth low-pass filter
+        # Initialize coefficients from a smooth low-pass filter prior
         smooth_lowpass = [1.0, -0.5, 0.1, -0.02, 0.004, -0.0008, 0.00015, -0.00003]
         coeffs_data = torch.zeros(filter_order + 1)
         for i, val in enumerate(smooth_lowpass[:filter_order + 1]):
             coeffs_data[i] = val
         
         self.coeffs = nn.Parameter(coeffs_data)
-    
+
     def forward(self, eigenvalues):
-        """Apply learnable spectral filter using Chebyshev polynomials"""
+        """
+        Apply learnable spectral filter on eigenvalues using selected polynomial basis.
+        Returns a smoothed filter response.
+        """
         # Normalize eigenvalues to [-1, 1]
         max_eigenval = torch.max(eigenvalues) + 1e-8
         x = 2 * (eigenvalues / max_eigenval) - 1
-        
-        # Compute Chebyshev polynomial response
-        result = self.coeffs[0] * torch.ones_like(x)
-        
-        if len(self.coeffs) > 1:
-            T_prev, T_curr = torch.ones_like(x), x
-            result += self.coeffs[1] * T_curr
-            
-            for i in range(2, len(self.coeffs)):
-                T_next = 2 * x * T_curr - T_prev
-                result += self.coeffs[i] * T_next
-                T_prev, T_curr = T_curr, T_next
-        
+
+        basis = self._compute_polynomials(x)
+        result = sum(self.coeffs[i] * basis[i] for i in range(self.filter_order + 1))
+
         return torch.exp(-torch.abs(result)) + 1e-6
+
+    def _compute_polynomials(self, x):
+        """
+        Computes the polynomial basis [P_0(x), ..., P_k(x)] depending on the selected type.
+        """
+        basis = []
+        if self.basis_type == "chebyshev":
+            T_prev, T_curr = torch.ones_like(x), x
+            basis.append(T_prev)
+            if self.filter_order >= 1:
+                basis.append(T_curr)
+            for _ in range(2, self.filter_order + 1):
+                T_next = 2 * x * T_curr - T_prev
+                basis.append(T_next)
+                T_prev, T_curr = T_curr, T_next
+
+        elif self.basis_type == "legendre":
+            P_prev, P_curr = torch.ones_like(x), x
+            basis.append(P_prev)
+            if self.filter_order >= 1:
+                basis.append(P_curr)
+            for n in range(2, self.filter_order + 1):
+                P_next = ((2 * n - 1) * x * P_curr - (n - 1) * P_prev) / n
+                basis.append(P_next)
+                P_prev, P_curr = P_curr, P_next
+
+        elif self.basis_type == "jacobi":
+            P_prev = torch.ones_like(x)
+            basis.append(P_prev)
+            if self.filter_order >= 1:
+                P_curr = 0.5 * (2 * (self.alpha + 1) + (self.alpha + self.beta + 2) * (x - 1))
+                basis.append(P_curr)
+
+            for n in range(2, self.filter_order + 1):
+                a1 = 2 * n * (n + self.alpha + self.beta) * (2 * n + self.alpha + self.beta - 2)
+                a2 = (2 * n + self.alpha + self.beta - 1) * (self.alpha ** 2 - self.beta ** 2)
+                a3 = (2 * n + self.alpha + self.beta - 2) * (2 * n + self.alpha + self.beta - 1) * (2 * n + self.alpha + self.beta)
+                a4 = 2 * (n + self.alpha - 1) * (n + self.beta - 1) * (2 * n + self.alpha + self.beta)
+
+                P_next = ((a2 + a3 * x) * P_curr - a4 * P_prev) / a1
+                basis.append(P_next)
+                P_prev, P_curr = P_curr, P_next
+
+        else:
+            raise ValueError(f"Unknown basis type: {self.basis_type}")
+
+        return basis
+
 
 class UniversalSpectralCF(nn.Module):
     def __init__(self, adj_mat, config=None):

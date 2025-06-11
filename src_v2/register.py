@@ -1,7 +1,7 @@
 '''
 Created on June 7, 2025
 PyTorch Implementation of uSpec: Universal Spectral Collaborative Filtering
-Enhanced with simple model selection between basic, enhanced, and simple versions
+Enhanced with user-specific model selection
 
 @author: Tseesuren Batsuuri (tseesuren.batsuuri@hdr.mq.edu.au)
 '''
@@ -18,7 +18,7 @@ elif world.dataset == 'ml-100k':
 else:
     raise ValueError(f"Unknown dataset: {world.dataset}")
 
-# Model selection based on configuration - UPDATED
+# Model selection based on configuration - UPDATED WITH USER-SPECIFIC MODEL
 model_type = world.config.get('model_type', 'enhanced')
 
 if model_type == 'simple':
@@ -43,9 +43,18 @@ elif model_type == 'enhanced':
     print(f"   └─ DySimGCF-style similarity-aware Laplacian")
     print(f"   └─ Advanced filter designs and caching")
     print(f"   └─ Adaptive eigenvalue calculation")
+
+elif model_type == 'user_specific':
+    import model_personalized
+    MODELS = {'uspec': model_personalized.UserSpecificUniversalSpectralCF}
+    print("🎯 Using User-Specific Universal Spectral CF (model_user_specific.py)")
+    print(f"   └─ Personalized spectral filter parameters for each user")
+    print(f"   └─ Shared base: {world.config.get('shared_base', True)}")
+    print(f"   └─ Personalization dim: {world.config.get('personalization_dim', 8)}")
+    print(f"   └─ Cold start strategy: {world.config.get('cold_start_strategy', 'average')}")
     
 else:
-    raise ValueError(f"Unknown model_type: {model_type}. Choose 'simple', 'basic', or 'enhanced'")
+    raise ValueError(f"Unknown model_type: {model_type}. Choose 'simple', 'basic', 'enhanced', or 'user_specific'")
 
 # Display configuration info
 if world.config['verbose'] > 0:
@@ -79,6 +88,12 @@ if world.config['verbose'] > 0:
         print(f"   └─ Filter Mode: {world.config.get('filter_mode', 'single')}")
     elif model_type == 'enhanced':
         print(f"   └─ Filter Design: {world.config.get('filter_design', 'enhanced_basis')}")
+        print(f"   └─ Similarity Type: {world.config.get('similarity_type', 'cosine')}")
+        print(f"   └─ Similarity Threshold: {world.config.get('similarity_threshold', 0.01)}")
+    elif model_type == 'user_specific':
+        print(f"   └─ Shared Base: {world.config.get('shared_base', True)}")
+        print(f"   └─ Personalization Dim: {world.config.get('personalization_dim', 8)}")
+        print(f"   └─ Cold Start Strategy: {world.config.get('cold_start_strategy', 'average')}")
         print(f"   └─ Similarity Type: {world.config.get('similarity_type', 'cosine')}")
         print(f"   └─ Similarity Threshold: {world.config.get('similarity_threshold', 0.01)}")
     
