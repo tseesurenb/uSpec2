@@ -1,23 +1,23 @@
 '''
-Created on June 7, 2025
-PyTorch Implementation of uSpec: Universal Spectral Collaborative Filtering
-Enhanced with user-specific model configuration support and BCE loss
+Created on June 12, 2025
+Enhanced world configuration with all filter options
+Minimalist approach with comprehensive filter support
 
 @author: Tseesuren Batsuuri (tseesuren.batsuuri@hdr.mq.edu.au)
 '''
 
 import os
 import torch
-from parse import parse_args
+from parse import parse_args, validate_args
 import multiprocessing
 
+# Parse and validate arguments
 args = parse_args()
+args = validate_args(args)
 
 config = {}
-all_dataset = ['lastfm', 'gowalla', 'yelp2018', 'amazon-book', 'ml-100k']
-all_models = ['uspec']
 
-# Basic training parameters
+# Basic configuration
 config['train_u_batch_size'] = args.train_u_batch_size
 config['eval_u_batch_size'] = args.eval_u_batch_size
 config['dataset'] = args.dataset
@@ -27,80 +27,152 @@ config['epochs'] = args.epochs
 config['filter'] = args.filter
 config['filter_order'] = args.filter_order
 config['verbose'] = args.verbose
-config['val_ratio'] = args.val_ratio
 config['patience'] = args.patience
 config['min_delta'] = args.min_delta
 config['n_epoch_eval'] = args.n_epoch_eval
-config['m_type'] = args.m_type
 
-# Loss function configuration (NEW!)
-config['loss_function'] = args.loss_function
+# Eigenvalue configuration
+config['u_n_eigen'] = args.u_n_eigen
+config['i_n_eigen'] = args.i_n_eigen
+config['b_n_eigen'] = args.b_n_eigen
 
-# BCE-specific parameters (NEW!)
-config['bce_pos_weight'] = args.bce_pos_weight
-config['negative_sampling_ratio'] = args.negative_sampling_ratio
-config['use_focal_loss'] = args.use_focal_loss
-config['focal_alpha'] = args.focal_alpha
-config['focal_gamma'] = args.focal_gamma
+# Enhanced filter configurations
+config['user_filter_design'] = args.user_filter_design
+config['item_filter_design'] = args.item_filter_design
+config['bipartite_filter_design'] = args.bipartite_filter_design
+config['user_init_filter'] = args.user_init_filter
+config['item_init_filter'] = args.item_init_filter
+config['bipartite_init_filter'] = args.bipartite_init_filter
 
-# Model selection - UPDATED WITH USER-SPECIFIC MODEL
-config['model_type'] = args.model_type
+# Personalization dimensions
+config['user_personalization_dim'] = args.user_personalization_dim
+config['item_personalization_dim'] = args.item_personalization_dim
+config['bipartite_personalization_dim'] = args.bipartite_personalization_dim
 
-# Enhanced eigenvalue configuration with three-view support
-config['n_eigen'] = args.n_eigen  # Legacy support
-config['u_n_eigen'] = args.u_n_eigen  # User eigenvalue count
-config['i_n_eigen'] = args.i_n_eigen  # Item eigenvalue count
-config['b_n_eigen'] = args.b_n_eigen  # Bipartite eigenvalue count
-
-# Filter design options (only used with enhanced model)
-config['filter_design'] = args.filter_design
-config['init_filter'] = args.init_filter
-
-# Simple model specific parameters
-config['filter_mode'] = args.filter_mode
-config['n_hops'] = args.n_hops
-
-# User-specific model parameters (NEW!)
-config['shared_base'] = args.shared_base
-config['personalization_dim'] = args.personalization_dim
-config['cold_start_strategy'] = args.cold_start_strategy
-
-# Laplacian-specific configuration (legacy)
-config['use_laplacian'] = args.use_laplacian
-config['laplacian_type'] = args.laplacian_type
-
-# Enhanced similarity-aware configuration (only used with enhanced model)
-config['use_similarity_norm'] = args.use_similarity_norm
-config['similarity_type'] = args.similarity_type
-config['similarity_threshold'] = args.similarity_threshold
-config['similarity_weight'] = args.similarity_weight
+# Advanced filter parameters
+config['n_bands'] = args.n_bands
+config['n_harmonics'] = args.n_harmonics
+config['n_stop_bands'] = args.n_stop_bands
+config['ensemble_temperature'] = args.ensemble_temperature
 
 # Polynomial filter parameters
 config['polynomial_type'] = args.polynomial_type
-config['polynomial_params'] = {
-    'alpha': args.polynomial_alpha,
-    'beta': args.polynomial_beta,
-    'types': args.adaptive_polynomial_types
-}
+config['alpha'] = args.alpha
+config['beta'] = args.beta
 
-config['n_hops'] = args.n_hops
-config['hop_decay'] = args.hop_decay
-
+# System configuration
 device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
-config['device'] = device  # Add device to config for model access
+config['device'] = device
 
 CORES = multiprocessing.cpu_count() // 2
 seed = args.seed
-
 dataset = args.dataset
 model_name = args.model
-if dataset not in all_dataset:
-    raise NotImplementedError(f"Haven't supported {dataset} yet!, try {all_dataset}")
-if model_name not in all_models:
-    raise NotImplementedError(f"Haven't supported {model_name} yet!, try {all_models}")
-
 TRAIN_epochs = args.epochs
 topks = eval(args.topks)
 
 def cprint(words: str):
+    """Colored print for dataset loading"""
     print(f"\033[0;30;43m{words}\033[0m")
+
+def print_config_summary():
+    """Print a nice configuration summary"""
+    if config['verbose'] > 0:
+        print(f"\n🎛️  \033[96mUniversal Spectral CF Configuration\033[0m")
+        print(f"┌─ Dataset: \033[94m{dataset}\033[0m")
+        print(f"├─ Device: \033[94m{device}\033[0m")
+        print(f"├─ Filter combo: \033[94m{config['filter']}\033[0m")
+        print(f"├─ Filter order: \033[94m{config['filter_order']}\033[0m")
+        print(f"├─ Learning rate: \033[94m{config['lr']}\033[0m")
+        print(f"├─ Epochs: \033[94m{config['epochs']}\033[0m")
+        print(f"└─ Seed: \033[94m{seed}\033[0m")
+        
+        print(f"\n🔧 \033[95mFilter Designs:\033[0m")
+        print(f"├─ User: \033[93m{config['user_filter_design']}\033[0m (\033[92m{config['user_init_filter']}\033[0m)")
+        print(f"├─ Item: \033[93m{config['item_filter_design']}\033[0m (\033[92m{config['item_init_filter']}\033[0m)")
+        print(f"└─ Bipartite: \033[93m{config['bipartite_filter_design']}\033[0m (\033[92m{config['bipartite_init_filter']}\033[0m)")
+
+# Available filter types for reference
+AVAILABLE_FILTERS = {
+    'original': 'Basic universal spectral filter',
+    'spectral_basis': 'Spectral basis filter',
+    'enhanced_basis': 'Multi-pattern enhanced filter',
+    'chebyshev': 'Chebyshev polynomial filter',
+    'jacobi': 'Jacobi polynomial filter',
+    'legendre': 'Legendre polynomial filter',
+    'laguerre': 'Laguerre polynomial filter',
+    'hermite': 'Hermite polynomial filter',
+    'bernstein': 'Bernstein polynomial filter',
+    'universal_polynomial': 'Universal polynomial filter',
+    'bandstop': 'Band-stop frequency filter',
+    'adaptive_bandstop': 'Advanced multi-band stop filter',
+    'parametric': 'Parametric multi-band filter',
+    'multiscale': 'Multi-scale spectral filter',
+    'harmonic': 'Harmonic series filter',
+    'golden': 'Adaptive golden ratio filter',
+    'ensemble': 'Ensemble of all filter types'
+}
+
+AVAILABLE_PATTERNS = {
+    'smooth': 'Smooth low-pass pattern',
+    'sharp': 'Sharp edge-preserving pattern',
+    'bandpass': 'Band-pass frequency pattern',
+    'golden_036': 'Golden ratio optimized pattern',
+    'butterworth': 'Butterworth filter pattern',
+    'gaussian': 'Gaussian smoothing pattern',
+    'band_stop': 'Band-stop rejection pattern',
+    'notch': 'Notch filter pattern'
+}
+
+def get_filter_info():
+    """Get information about available filters"""
+    return {
+        'filter_types': AVAILABLE_FILTERS,
+        'init_patterns': AVAILABLE_PATTERNS,
+        'current_config': {
+            'user_filter': f"{config['user_filter_design']} ({config['user_init_filter']})",
+            'item_filter': f"{config['item_filter_design']} ({config['item_init_filter']})",
+            'bipartite_filter': f"{config['bipartite_filter_design']} ({config['bipartite_init_filter']})"
+        }
+    }
+
+def get_quick_configs():
+    """Get predefined quick configurations"""
+    return {
+        'fast': {
+            'description': 'Fast training with basic filters',
+            'user_filter_design': 'original',
+            'item_filter_design': 'original',
+            'bipartite_filter_design': 'original',
+            'filter_order': 4,
+            'epochs': 30
+        },
+        'balanced': {
+            'description': 'Balanced performance with mixed filters',
+            'user_filter_design': 'enhanced_basis',
+            'item_filter_design': 'chebyshev',
+            'bipartite_filter_design': 'original',
+            'filter_order': 6,
+            'epochs': 50
+        },
+        'quality': {
+            'description': 'High quality with advanced filters',
+            'user_filter_design': 'enhanced_basis',
+            'item_filter_design': 'parametric',
+            'bipartite_filter_design': 'bandstop',
+            'filter_order': 8,
+            'epochs': 80
+        },
+        'experimental': {
+            'description': 'Experimental ensemble approach',
+            'user_filter_design': 'ensemble',
+            'item_filter_design': 'ensemble',
+            'bipartite_filter_design': 'ensemble',
+            'filter_order': 7,
+            'epochs': 60
+        }
+    }
+
+# Print configuration summary at startup
+if __name__ != '__main__':
+    print_config_summary()

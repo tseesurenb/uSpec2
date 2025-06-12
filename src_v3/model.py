@@ -1,7 +1,7 @@
 '''
-Created on June 3, 2025
-PyTorch Implementation of uSpec: Universal Spectral Collaborative Filtering
-Updated with separate u_n_eigen and i_n_eigen support + Comprehensive Caching
+Created on June 12, 2025
+Fixed Universal Spectral CF with Complete Filter Collection
+Properly integrated with comprehensive filters.py
 
 @author: Tseesuren Batsuuri (tseesuren.batsuuri@hdr.mq.edu.au)
 '''
@@ -15,428 +15,306 @@ import time
 import gc
 import os
 import pickle
-import world
+import filters as fl
 
-# class UniversalSpectralFilter(nn.Module):
-#     def __init__(self, filter_order=3):
-#         super().__init__()
-#         self.filter_order = filter_order
 
-#         # Initialize coefficients based on a smooth low-pass filter
-#         smooth_lowpass = [1.0, -0.5, 0.1, -0.02, 0.004, -0.0008, 0.00015, -0.00003]
-#         coeffs_data = torch.zeros(filter_order + 1)
-#         for i, val in enumerate(smooth_lowpass[:filter_order + 1]):
-#             coeffs_data[i] = val
-        
-#         self.coeffs = nn.Parameter(coeffs_data)
+class UserSpecificUniversalSpectralCF(nn.Module):
+    """Universal Spectral CF with Complete Filter Collection"""
     
-#     def forward(self, eigenvalues):
-#         """Apply learnable spectral filter using Chebyshev polynomials"""
-#         # Normalize eigenvalues to [-1, 1]
-#         max_eigenval = torch.max(eigenvalues) + 1e-8
-#         x = 2 * (eigenvalues / max_eigenval) - 1
-        
-#         # Compute Chebyshev polynomial response
-#         result = self.coeffs[0] * torch.ones_like(x)
-        
-#         if len(self.coeffs) > 1:
-#             T_prev, T_curr = torch.ones_like(x), x
-#             result += self.coeffs[1] * T_curr
-            
-#             for i in range(2, len(self.coeffs)):
-#                 T_next = 2 * x * T_curr - T_prev
-#                 result += self.coeffs[i] * T_next
-#                 T_prev, T_curr = T_curr, T_next
-        
-#         return torch.exp(-torch.abs(result)) + 1e-6
-
-import torch
-import torch.nn as nn
-
-# Chebyshev filter
-# filter_cheb = UniversalSpectralFilter(filter_order=4, basis_type="chebyshev")
-
-# Legendre filter
-# filter_leg = UniversalSpectralFilter(filter_order=4, basis_type="legendre")
-
-# Jacobi filter (e.g., alpha=0.5, beta=0.5)
-# filter_jacobi = UniversalSpectralFilter(filter_order=4, basis_type="jacobi", alpha=0.5, beta=0.5)
-
-class UniversalSpectralFilter(nn.Module):
-    def __init__(self, filter_order=3, basis_type="jacobi", alpha=0.5, beta=0.5):
-        """
-        basis_type: 'chebyshev', 'legendre', or 'jacobi'
-        alpha, beta: only used for Jacobi polynomials
-        """
-        super().__init__()
-        self.filter_order = filter_order
-        self.basis_type = basis_type.lower()
-        self.alpha = alpha
-        self.beta = beta
-
-        # Initialize coefficients from a smooth low-pass filter prior
-        smooth_lowpass = [1.0, -0.5, 0.1, -0.02, 0.004, -0.0008, 0.00015, -0.00003]
-        coeffs_data = torch.zeros(filter_order + 1)
-        for i, val in enumerate(smooth_lowpass[:filter_order + 1]):
-            coeffs_data[i] = val
-        
-        self.coeffs = nn.Parameter(coeffs_data)
-
-    def forward(self, eigenvalues):
-        """
-        Apply learnable spectral filter on eigenvalues using selected polynomial basis.
-        Returns a smoothed filter response.
-        """
-        # Normalize eigenvalues to [-1, 1]
-        max_eigenval = torch.max(eigenvalues) + 1e-8
-        x = 2 * (eigenvalues / max_eigenval) - 1
-
-        basis = self._compute_polynomials(x)
-        result = sum(self.coeffs[i] * basis[i] for i in range(self.filter_order + 1))
-
-        return torch.exp(-torch.abs(result)) + 1e-6
-
-    def _compute_polynomials(self, x):
-        """
-        Computes the polynomial basis [P_0(x), ..., P_k(x)] depending on the selected type.
-        """
-        basis = []
-        if self.basis_type == "chebyshev":
-            T_prev, T_curr = torch.ones_like(x), x
-            basis.append(T_prev)
-            if self.filter_order >= 1:
-                basis.append(T_curr)
-            for _ in range(2, self.filter_order + 1):
-                T_next = 2 * x * T_curr - T_prev
-                basis.append(T_next)
-                T_prev, T_curr = T_curr, T_next
-
-        elif self.basis_type == "legendre":
-            P_prev, P_curr = torch.ones_like(x), x
-            basis.append(P_prev)
-            if self.filter_order >= 1:
-                basis.append(P_curr)
-            for n in range(2, self.filter_order + 1):
-                P_next = ((2 * n - 1) * x * P_curr - (n - 1) * P_prev) / n
-                basis.append(P_next)
-                P_prev, P_curr = P_curr, P_next
-
-        elif self.basis_type == "jacobi":
-            P_prev = torch.ones_like(x)
-            basis.append(P_prev)
-            if self.filter_order >= 1:
-                P_curr = 0.5 * (2 * (self.alpha + 1) + (self.alpha + self.beta + 2) * (x - 1))
-                basis.append(P_curr)
-
-            for n in range(2, self.filter_order + 1):
-                a1 = 2 * n * (n + self.alpha + self.beta) * (2 * n + self.alpha + self.beta - 2)
-                a2 = (2 * n + self.alpha + self.beta - 1) * (self.alpha ** 2 - self.beta ** 2)
-                a3 = (2 * n + self.alpha + self.beta - 2) * (2 * n + self.alpha + self.beta - 1) * (2 * n + self.alpha + self.beta)
-                a4 = 2 * (n + self.alpha - 1) * (n + self.beta - 1) * (2 * n + self.alpha + self.beta)
-
-                P_next = ((a2 + a3 * x) * P_curr - a4 * P_prev) / a1
-                basis.append(P_next)
-                P_prev, P_curr = P_curr, P_next
-
-        else:
-            raise ValueError(f"Unknown basis type: {self.basis_type}")
-
-        return basis
-
-
-class UniversalSpectralCF(nn.Module):
     def __init__(self, adj_mat, config=None):
         super().__init__()
         
-        # Configuration
+        # Basic configuration
         self.config = config or {}
         self.device = self.config.get('device', 'cpu')
-        self.filter_order = self.config.get('filter_order', 3)
+        self.filter_order = self.config.get('filter_order', 6)
         self.filter = self.config.get('filter', 'ui')
+        self.dataset = self.config.get('dataset', 'unknown')
         
-        # Enhanced eigenvalue configuration with separate user/item counts
-        self.u_n_eigen, self.i_n_eigen = self._get_eigenvalue_counts()
-        
-        # Convert and register adjacency matrix
+        # Convert adjacency matrix
         adj_dense = adj_mat.toarray() if sp.issparse(adj_mat) else adj_mat
-        self.register_buffer('adj_tensor', torch.tensor(adj_dense, dtype=torch.float32))
+        self.register_buffer('adj_tensor', torch.tensor(adj_dense, dtype=torch.float32).to(self.device))
         self.n_users, self.n_items = self.adj_tensor.shape
         
-        # Compute and register normalized adjacency
-        row_sums = self.adj_tensor.sum(dim=1, keepdim=True) + 1e-8
-        col_sums = self.adj_tensor.sum(dim=0, keepdim=True) + 1e-8
-        norm_adj = self.adj_tensor / torch.sqrt(row_sums) / torch.sqrt(col_sums)
-        self.register_buffer('norm_adj', norm_adj)
-        
-        print(f"🔧 Universal Spectral CF with Caching:")
-        print(f"   └─ Dataset: {self.config.get('dataset', 'unknown')}")
-        print(f"   └─ Users: {self.n_users:,}, Items: {self.n_items:,}")
-        print(f"   └─ User eigenvalues (u_n_eigen): {self.u_n_eigen}")
-        print(f"   └─ Item eigenvalues (i_n_eigen): {self.i_n_eigen}")
-        print(f"   └─ Filter Type: {self.filter}")
-        print(f"   └─ Device: {self.device}")
-        
-        # Initialize filters and weights
-        self._setup_filters()
-        self._setup_combination_weights()
-    
-    def _get_eigenvalue_counts(self):
-        """Get separate eigenvalue counts for users and items"""
-        # Manual override if specified
-        manual_u_eigen = self.config.get('u_n_eigen', None)
-        manual_i_eigen = self.config.get('i_n_eigen', None)
-        manual_n_eigen = self.config.get('n_eigen', None)
-        
-        if manual_u_eigen is not None and manual_i_eigen is not None:
-            if manual_u_eigen > 0 and manual_i_eigen > 0:
-                print(f"   🎯 Using manual u_n_eigen: {manual_u_eigen}, i_n_eigen: {manual_i_eigen}")
-                return manual_u_eigen, manual_i_eigen
-        elif manual_n_eigen is not None and manual_n_eigen > 0:
-            print(f"   🎯 Using manual n_eigen for both: {manual_n_eigen}")
-            return manual_n_eigen, manual_n_eigen
-        
-        # Default values if not specified
-        u_n_eigen = 50
-        i_n_eigen = 50
-        print(f"   🤖 Using default eigenvalue counts: u_n_eigen={u_n_eigen}, i_n_eigen={i_n_eigen}")
-        return u_n_eigen, i_n_eigen
-    
-    def _get_cache_path(self, cache_type, filter_type=None):
-        """Generate cache file path with relevant parameters"""
-        cache_dir = "../cache"
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        dataset = self.config.get('dataset', 'unknown')
-        
-        if filter_type:
-            if cache_type.startswith('similarity'):
-                # Similarity matrices only depend on dataset and data, not on eigen counts
-                filename = f"{dataset}_universal_{filter_type}_sim.pkl"
-            else:  # eigen
-                # Eigendecompositions depend on eigen counts and other parameters
-                filter_order = self.config.get('filter_order', 3)
-                filter_mode = self.config.get('filter', 'ui')
-                u_eigen = self.u_n_eigen
-                i_eigen = self.i_n_eigen
-                k_value = u_eigen if filter_type == 'user' else i_eigen
-                filename = f"{dataset}_universal_u{u_eigen}_i{i_eigen}_fo{filter_order}_{filter_mode}_{filter_type}_eigen_k{k_value}.pkl"
+        # Eigenvalue counts (fixed auto-calculation)
+        if self.config.get('u_n_eigen') in [None, 0]:
+            self.u_n_eigen = min(32, max(16, self.n_users // 50))
         else:
-            # Other cache types
-            filter_order = self.config.get('filter_order', 3)
-            filter_mode = self.config.get('filter', 'ui')
-            u_eigen = self.u_n_eigen
-            i_eigen = self.i_n_eigen
-            filename = f"{dataset}_universal_u{u_eigen}_i{i_eigen}_fo{filter_order}_{filter_mode}_{cache_type}.pkl"
+            self.u_n_eigen = self.config.get('u_n_eigen')
             
-        return os.path.join(cache_dir, filename)
+        if self.config.get('i_n_eigen') in [None, 0]:
+            self.i_n_eigen = min(48, max(24, self.n_items // 50))
+        else:
+            self.i_n_eigen = self.config.get('i_n_eigen')
+            
+        if self.config.get('b_n_eigen') in [None, 0]:
+            self.b_n_eigen = min(40, max(20, (self.n_users + self.n_items) // 80))
+        else:
+            self.b_n_eigen = self.config.get('b_n_eigen')
+        
+        print(f"Initializing {self.dataset}: {self.n_users} users, {self.n_items} items")
+        print(f"Filter: {self.filter}, Eigenvalues: u={self.u_n_eigen}, i={self.i_n_eigen}, b={self.b_n_eigen}")
+        
+        # Setup filters and eigendecompositions
+        self.setup_spectral_filters()
+        self.setup_combination_weights()
     
-    def _save_to_cache(self, data, cache_path):
-        """Save data to cache file"""
-        try:
-            with open(cache_path, 'wb') as f:
-                pickle.dump(data, f)
-            print(f"    💾 Saved to {os.path.basename(cache_path)}")
-        except Exception as e:
-            print(f"    ⚠️ Cache save failed: {e}")
-    
-    def _load_from_cache(self, cache_path):
-        """Load data from cache file"""
-        try:
-            if os.path.exists(cache_path):
-                with open(cache_path, 'rb') as f:
-                    data = pickle.load(f)
-                print(f"    📂 Loaded {os.path.basename(cache_path)}")
-                return data
-        except Exception as e:
-            print(f"    ⚠️ Cache load failed: {e}")
-        return None
-    
-    def _memory_cleanup(self):
-        """Force memory cleanup"""
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    
-    def _setup_filters(self):
-        """Setup spectral filters with eigendecompositions"""
-        print(f"Computing eigendecompositions for filter type: {self.filter}")
+    def setup_spectral_filters(self):
+        """Main setup - compute eigendecompositions and setup filters"""
         start = time.time()
         
-        # Initialize filters
-        self.user_filter = None
-        self.item_filter = None
+        # Setup view-specific filters
+        if self.filter in ['u', 'ui', 'uib', 'ub']:
+            print("Computing user-user similarity...")
+            self.user_eigenvals, self.user_eigenvecs = self.compute_user_eigen()
+            self.user_filter = self.create_user_filter()
         
-        if self.filter in ['u', 'ui']:
-            print("Processing user-user similarity matrix...")
-            self.user_filter = self._create_filter('user')
-            self._memory_cleanup()
+        if self.filter in ['i', 'ui', 'uib']:
+            print("Computing item-item similarity...")
+            self.item_eigenvals, self.item_eigenvecs = self.compute_item_eigen()
+            self.item_filter = self.create_item_filter()
         
-        if self.filter in ['i', 'ui']:
-            print("Processing item-item similarity matrix...")
-            self.item_filter = self._create_filter('item')
-            self._memory_cleanup()
+        if self.filter in ['b', 'uib', 'ub']:
+            print("Computing bipartite structure...")
+            self.bipartite_eigenvals, self.bipartite_eigenvecs = self.compute_bipartite_eigen()
+            self.bipartite_filter = self.create_bipartite_filter()
         
-        print(f'Filter setup completed in {time.time() - start:.2f}s')
+        print(f'Training completed in {time.time() - start:.2f}s')
     
-    def _compute_similarity_matrix(self, interaction_matrix, cache_type=None):
-        """Compute similarity matrix with caching"""
+    def compute_user_eigen(self):
+        """Compute user similarity eigendecomposition"""
+        cache_path = f"../cache/{self.dataset}_user_eigen_{self.u_n_eigen}.pkl"
         
-        # Try to load from cache first
-        if cache_type:
-            cache_path = self._get_cache_path('similarity', cache_type)
-            cached_data = self._load_from_cache(cache_path)
-            if cached_data is not None:
-                return cached_data.to(self.device)
+        if os.path.exists(cache_path):
+            with open(cache_path, 'rb') as f:
+                eigenvals, eigenvecs = pickle.load(f)
+            return eigenvals.to(self.device), eigenvecs.to(self.device)
         
-        print(f"    Computing similarity matrix...")
+        # Compute cosine similarity
+        norms = torch.norm(self.adj_tensor, dim=1, keepdim=True) + 1e-8
+        normalized = self.adj_tensor / norms
+        similarity = normalized @ normalized.t()
         
-        # Compute similarity matrix (using simple dot product similarity)
-        similarity = interaction_matrix @ interaction_matrix.t()
+        # Similarity Laplacian
+        degree = similarity.sum(dim=1) + 1e-8
+        deg_inv_sqrt = torch.pow(degree, -0.5)
+        deg_inv_sqrt[torch.isinf(deg_inv_sqrt)] = 0.0
+        normalized_sim = similarity * deg_inv_sqrt.unsqueeze(0) * deg_inv_sqrt.unsqueeze(1)
+        laplacian = torch.eye(self.n_users, device=self.device) - normalized_sim
         
-        # Normalize to get cosine similarity
-        norms = torch.norm(interaction_matrix, dim=1, keepdim=True) + 1e-8
-        similarity = similarity / (norms @ norms.t())
+        # Eigendecomposition
+        k = min(self.u_n_eigen, self.n_users - 2)
+        eigenvals, eigenvecs = eigsh(sp.csr_matrix(laplacian.cpu().numpy()), k=k, which='SM')
+        eigenvals = np.maximum(eigenvals, 0.0)
         
-        # Ensure symmetry
-        similarity = (similarity + similarity.t()) / 2
+        eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
+        eigenvecs_tensor = torch.tensor(eigenvecs, dtype=torch.float32)
         
-        # Set diagonal to 1 (self-similarity)
-        similarity.fill_diagonal_(1.0)
-        result = torch.clamp(similarity, min=0.0, max=1.0)
+        # Cache results
+        os.makedirs("../cache", exist_ok=True)
+        with open(cache_path, 'wb') as f:
+            pickle.dump((eigenvals_tensor, eigenvecs_tensor), f)
         
-        # Save to cache
-        if cache_type:
-            self._save_to_cache(result.cpu(), cache_path)
-        
-        return result
+        return eigenvals_tensor.to(self.device), eigenvecs_tensor.to(self.device)
     
-    def _create_filter(self, filter_type):
-        """Create filter with eigendecomposition using specified eigenvalue count"""
+    def compute_item_eigen(self):
+        """Compute item similarity eigendecomposition"""
+        cache_path = f"../cache/{self.dataset}_item_eigen_{self.i_n_eigen}.pkl"
         
-        # Use appropriate eigenvalue count
-        if filter_type == 'user':
-            n_eigen_to_use = self.u_n_eigen
-            n_components = self.n_users
-        else:
-            n_eigen_to_use = self.i_n_eigen
-            n_components = self.n_items
+        if os.path.exists(cache_path):
+            with open(cache_path, 'rb') as f:
+                eigenvals, eigenvecs = pickle.load(f)
+            return eigenvals.to(self.device), eigenvecs.to(self.device)
         
-        # Try to load eigendecomposition from cache
-        eigen_cache_path = self._get_cache_path('eigen', filter_type)
-        cached_eigen = self._load_from_cache(eigen_cache_path)
+        # Compute cosine similarity for items
+        adj_t = self.adj_tensor.t()
+        norms = torch.norm(adj_t, dim=1, keepdim=True) + 1e-8
+        normalized = adj_t / norms
+        similarity = normalized @ normalized.t()
         
-        if cached_eigen is not None:
-            eigenvals, eigenvecs = cached_eigen
-            self.register_buffer(f'{filter_type}_eigenvals', eigenvals.to(self.device))
-            self.register_buffer(f'{filter_type}_eigenvecs', eigenvecs.to(self.device))
-            print(f"  {filter_type.capitalize()} eigendecomposition loaded from cache ({n_eigen_to_use} eigenvalues)")
-        else:
-            print(f"  Computing {filter_type} similarity matrix...")
-            
-            with torch.no_grad():
-                if filter_type == 'user':
-                    similarity_matrix = self._compute_similarity_matrix(self.norm_adj, cache_type='user')
-                else:  # item
-                    similarity_matrix = self._compute_similarity_matrix(self.norm_adj.t(), cache_type='item')
-            
-            print(f"  Computing eigendecomposition...")
-            sim_np = similarity_matrix.cpu().numpy()
-            
-            del similarity_matrix
-            self._memory_cleanup()
-            
-            k = min(n_eigen_to_use, n_components - 2)
-            
-            try:
-                print(f"  Computing {k} largest eigenvalues for {filter_type}...")
-                eigenvals, eigenvecs = eigsh(sp.csr_matrix(sim_np), k=k, which='LM')
-                
-                eigenvals_tensor = torch.tensor(np.real(eigenvals), dtype=torch.float32)
-                eigenvecs_tensor = torch.tensor(np.real(eigenvecs), dtype=torch.float32)
-                
-                # Save to cache
-                self._save_to_cache((eigenvals_tensor, eigenvecs_tensor), eigen_cache_path)
-                
-                # Register buffers
-                self.register_buffer(f'{filter_type}_eigenvals', eigenvals_tensor.to(self.device))
-                self.register_buffer(f'{filter_type}_eigenvecs', eigenvecs_tensor.to(self.device))
-                
-                print(f"  {filter_type.capitalize()} eigendecomposition: {k} components")
-                print(f"  Eigenvalue range: [{eigenvals.min():.4f}, {eigenvals.max():.4f}]")
-                
-            except Exception as e:
-                print(f"  {filter_type.capitalize()} eigendecomposition failed: {e}")
-                print(f"  Using fallback identity matrices...")
-                
-                eigenvals = np.ones(min(n_eigen_to_use, n_components))
-                eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
-                eigenvecs_tensor = torch.eye(n_components, min(n_eigen_to_use, n_components))
-                
-                # Save fallback to cache
-                self._save_to_cache((eigenvals_tensor, eigenvecs_tensor), eigen_cache_path)
-                
-                self.register_buffer(f'{filter_type}_eigenvals', eigenvals_tensor.to(self.device))
-                self.register_buffer(f'{filter_type}_eigenvecs', eigenvecs_tensor.to(self.device))
-            
-            del sim_np
-            if 'eigenvals' in locals():
-                del eigenvals, eigenvecs
-            self._memory_cleanup()
+        # Similarity Laplacian
+        degree = similarity.sum(dim=1) + 1e-8
+        deg_inv_sqrt = torch.pow(degree, -0.5)
+        deg_inv_sqrt[torch.isinf(deg_inv_sqrt)] = 0.0
+        normalized_sim = similarity * deg_inv_sqrt.unsqueeze(0) * deg_inv_sqrt.unsqueeze(1)
+        laplacian = torch.eye(self.n_items, device=self.device) - normalized_sim
         
-        return UniversalSpectralFilter(self.filter_order)
+        # Eigendecomposition
+        k = min(self.i_n_eigen, self.n_items - 2)
+        eigenvals, eigenvecs = eigsh(sp.csr_matrix(laplacian.cpu().numpy()), k=k, which='SM')
+        eigenvals = np.maximum(eigenvals, 0.0)
+        
+        eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
+        eigenvecs_tensor = torch.tensor(eigenvecs, dtype=torch.float32)
+        
+        # Cache results
+        os.makedirs("../cache", exist_ok=True)
+        with open(cache_path, 'wb') as f:
+            pickle.dump((eigenvals_tensor, eigenvecs_tensor), f)
+        
+        return eigenvals_tensor.to(self.device), eigenvecs_tensor.to(self.device)
     
-    def _setup_combination_weights(self):
-        """Setup learnable combination weights"""
-        init_weights = {
-            'u': [0.5, 0.5],
-            'i': [0.5, 0.5], 
-            'ui': [0.5, 0.3, 0.2]
+    def compute_bipartite_eigen(self):
+        """Compute bipartite eigendecomposition"""
+        cache_path = f"../cache/{self.dataset}_bipartite_eigen_{self.b_n_eigen}.pkl"
+        
+        if os.path.exists(cache_path):
+            with open(cache_path, 'rb') as f:
+                eigenvals, eigenvecs = pickle.load(f)
+            return eigenvals.to(self.device), eigenvecs.to(self.device)
+        
+        # Create bipartite adjacency matrix
+        n_total = self.n_users + self.n_items
+        bipartite_adj = torch.zeros(n_total, n_total, device=self.device)
+        bipartite_adj[:self.n_users, self.n_users:] = self.adj_tensor
+        bipartite_adj[self.n_users:, :self.n_users] = self.adj_tensor.t()
+        
+        # Normalized Laplacian
+        degree = bipartite_adj.sum(dim=1) + 1e-8
+        deg_inv_sqrt = torch.pow(degree, -0.5)
+        deg_inv_sqrt[torch.isinf(deg_inv_sqrt)] = 0.0
+        normalized_adj = bipartite_adj * deg_inv_sqrt.unsqueeze(0) * deg_inv_sqrt.unsqueeze(1)
+        laplacian = torch.eye(n_total, device=self.device) - normalized_adj
+        
+        # Eigendecomposition
+        k = min(self.b_n_eigen, n_total - 2)
+        eigenvals, eigenvecs = eigsh(sp.csr_matrix(laplacian.cpu().numpy()), k=k, which='SM')
+        eigenvals = np.maximum(eigenvals, 0.0)
+        
+        eigenvals_tensor = torch.tensor(eigenvals, dtype=torch.float32)
+        eigenvecs_tensor = torch.tensor(eigenvecs, dtype=torch.float32)
+        
+        # Cache results
+        os.makedirs("../cache", exist_ok=True)
+        with open(cache_path, 'wb') as f:
+            pickle.dump((eigenvals_tensor, eigenvecs_tensor), f)
+        
+        return eigenvals_tensor.to(self.device), eigenvecs_tensor.to(self.device)
+    
+    def create_user_filter(self):
+        """Create user-specific filter using complete filter collection"""
+        user_design = self.config.get('user_filter_design', 'enhanced_basis')
+        user_init = self.config.get('user_init_filter', 'smooth')
+        user_dim = self.config.get('user_personalization_dim', 16)
+        
+        # Get additional parameters for advanced filters
+        filter_kwargs = {
+            'n_bands': self.config.get('n_bands', 4),
+            'n_harmonics': self.config.get('n_harmonics', 3),
+            'n_stop_bands': self.config.get('n_stop_bands', 2),
+            'alpha': self.config.get('alpha', 0.0),
+            'beta': self.config.get('beta', 0.0),
+            'polynomial_type': self.config.get('polynomial_type', 'chebyshev'),
+            'polynomial_params': {'alpha': self.config.get('alpha', 0.0), 'beta': self.config.get('beta', 0.0)}
         }
-        self.combination_weights = nn.Parameter(torch.tensor(init_weights[self.filter]))
+        
+        return UserSpecificFilter(
+            self.n_users, self.n_items, self.filter_order, 
+            user_init, True, user_dim, user_design, **filter_kwargs
+        )
     
-    def _get_filter_matrices(self):
-        """Compute spectral filter matrices"""
-        user_matrix = item_matrix = None
+    def create_item_filter(self):
+        """Create item-specific filter using complete filter collection"""
+        item_design = self.config.get('item_filter_design', 'chebyshev')
+        item_init = self.config.get('item_init_filter', 'sharp')
+        item_dim = self.config.get('item_personalization_dim', 12)
         
-        if self.user_filter is not None:
-            response = self.user_filter(self.user_eigenvals)
-            user_matrix = self.user_eigenvecs @ torch.diag(response) @ self.user_eigenvecs.t()
+        # Get additional parameters for advanced filters
+        filter_kwargs = {
+            'n_bands': self.config.get('n_bands', 4),
+            'n_harmonics': self.config.get('n_harmonics', 3),
+            'n_stop_bands': self.config.get('n_stop_bands', 2),
+            'alpha': self.config.get('alpha', 0.0),
+            'beta': self.config.get('beta', 0.0),
+            'polynomial_type': self.config.get('polynomial_type', 'chebyshev'),
+            'polynomial_params': {'alpha': self.config.get('alpha', 0.0), 'beta': self.config.get('beta', 0.0)}
+        }
         
-        if self.item_filter is not None:
-            response = self.item_filter(self.item_eigenvals)
-            item_matrix = self.item_eigenvecs @ torch.diag(response) @ self.item_eigenvecs.t()
+        return ItemSpecificFilter(
+            self.n_users, self.n_items, self.filter_order,
+            item_init, True, item_dim, item_design, **filter_kwargs
+        )
+    
+    def create_bipartite_filter(self):
+        """Create bipartite-specific filter using complete filter collection"""
+        bipartite_design = self.config.get('bipartite_filter_design', 'original')
+        bipartite_init = self.config.get('bipartite_init_filter', 'smooth')
+        bipartite_dim = self.config.get('bipartite_personalization_dim', 20)
         
-        return user_matrix, item_matrix
+        # Get additional parameters for advanced filters
+        filter_kwargs = {
+            'n_bands': self.config.get('n_bands', 4),
+            'n_harmonics': self.config.get('n_harmonics', 3),
+            'n_stop_bands': self.config.get('n_stop_bands', 2),
+            'alpha': self.config.get('alpha', 0.0),
+            'beta': self.config.get('beta', 0.0),
+            'polynomial_type': self.config.get('polynomial_type', 'chebyshev'),
+            'polynomial_params': {'alpha': self.config.get('alpha', 0.0), 'beta': self.config.get('beta', 0.0)}
+        }
+        
+        return BipartiteSpecificFilter(
+            self.n_users, self.n_items, self.filter_order,
+            bipartite_init, True, bipartite_dim, bipartite_design, **filter_kwargs
+        )
+    
+    def setup_combination_weights(self):
+        """Setup learnable combination weights"""
+        if self.filter == 'u':
+            init_weights = torch.tensor([0.5, 0.5])
+        elif self.filter == 'i':
+            init_weights = torch.tensor([0.5, 0.5])
+        elif self.filter == 'b':
+            init_weights = torch.tensor([0.5, 0.5])
+        elif self.filter == 'ui':
+            init_weights = torch.tensor([0.5, 0.3, 0.2])
+        elif self.filter == 'ub':
+            init_weights = torch.tensor([0.5, 0.3, 0.2])
+        elif self.filter == 'uib':
+            init_weights = torch.tensor([0.4, 0.25, 0.25, 0.1])
+        else:
+            init_weights = torch.tensor([0.5, 0.5])
+        
+        self.combination_weights = nn.Parameter(init_weights.to(self.device))
     
     def forward(self, users):
-        """Clean forward pass - ONLY returns predictions"""
-        # Ensure users tensor is on correct device
+        """Forward pass"""
         if users.device != self.adj_tensor.device:
             users = users.to(self.adj_tensor.device)
         
+        batch_size = users.shape[0]
         user_profiles = self.adj_tensor[users]
-        user_filter_matrix, item_filter_matrix = self._get_filter_matrices()
         
-        # Compute filtered scores based on filter type
-        scores = [user_profiles]  # Direct scores always included
+        scores = [user_profiles]  # Direct collaborative filtering
         
-        if self.filter in ['i', 'ui'] and item_filter_matrix is not None:
-            scores.append(user_profiles @ item_filter_matrix)
+        # Item-based filtering
+        if self.filter in ['i', 'ui', 'uib'] and hasattr(self, 'item_filter'):
+            item_responses = self.item_filter(self.item_eigenvals, users)
+            avg_item_response = item_responses.mean(dim=0)
+            item_filtered = user_profiles @ (self.item_eigenvecs @ torch.diag(avg_item_response) @ self.item_eigenvecs.t())
+            scores.append(item_filtered)
         
-        if self.filter in ['u', 'ui'] and user_filter_matrix is not None:
-            user_filtered = user_filter_matrix[users] @ self.adj_tensor
-            scores.append(user_filtered)
+        # User-based filtering
+        if self.filter in ['u', 'ui', 'uib', 'ub'] and hasattr(self, 'user_filter'):
+            user_responses = self.user_filter(self.user_eigenvals, users)
+            avg_user_response = user_responses.mean(dim=0)
+            user_matrix = self.user_eigenvecs @ torch.diag(avg_user_response) @ self.user_eigenvecs.t()
+            user_filtered_batch = user_matrix[users] @ self.adj_tensor
+            scores.append(user_filtered_batch)
         
-        # Combine scores with learned weights
+        # Bipartite filtering
+        if self.filter in ['b', 'uib', 'ub'] and hasattr(self, 'bipartite_filter'):
+            bipartite_responses = self.bipartite_filter(self.bipartite_eigenvals, users)
+            avg_bipartite_response = bipartite_responses.mean(dim=0)
+            bipartite_matrix = self.bipartite_eigenvecs @ torch.diag(avg_bipartite_response) @ self.bipartite_eigenvecs.t()
+            item_part = bipartite_matrix[self.n_users:, self.n_users:]
+            bipartite_batch = user_profiles @ item_part
+            scores.append(bipartite_batch)
+        
+        # Combine predictions
         weights = torch.softmax(self.combination_weights, dim=0)
         predicted = sum(w * score for w, score in zip(weights, scores))
         
-        # Memory cleanup for large datasets
-        if self.training and (self.n_users > 5000 or self.n_items > 5000):
-            del user_filter_matrix, item_filter_matrix
-            self._memory_cleanup()
-        
-        return predicted  # ALWAYS return predictions only!
+        return predicted
     
     def getUsersRating(self, batch_users):
         """Evaluation interface"""
@@ -445,7 +323,6 @@ class UniversalSpectralCF(nn.Module):
             if isinstance(batch_users, np.ndarray):
                 batch_users = torch.LongTensor(batch_users)
             
-            # Ensure batch_users is on the correct device
             if batch_users.device != self.device:
                 batch_users = batch_users.to(self.device)
             
@@ -455,247 +332,269 @@ class UniversalSpectralCF(nn.Module):
                 torch.cuda.empty_cache()
             
             return result
-    
-    def get_filter_parameters(self):
-        """Get filter parameters for separate optimization"""
-        filter_params = []
-        if self.user_filter is not None:
-            filter_params.extend(self.user_filter.parameters())
-        if self.item_filter is not None:
-            filter_params.extend(self.item_filter.parameters())
-        return filter_params
-    
-    def get_other_parameters(self):
-        """Get non-filter parameters"""
-        filter_param_ids = {id(p) for p in self.get_filter_parameters()}
-        return [p for p in self.parameters() if id(p) not in filter_param_ids]
-    
-    def get_parameter_count(self):
-        """Get parameter count breakdown"""
-        total_params = sum(p.numel() for p in self.parameters())
-        filter_params = sum(p.numel() for p in self.get_filter_parameters())
-        
-        return {
-            'total': total_params,
-            'filter': filter_params,
-            'combination': self.combination_weights.numel(),
-            'other': total_params - filter_params
-        }
-    
-    def clear_cache(self):
-        """Clear cache files for this dataset and configuration"""
-        cache_dir = "../cache"
-        if not os.path.exists(cache_dir):
-            return
-        
-        dataset = self.config.get('dataset', 'unknown')
-        
-        # Look for files matching this dataset
-        pattern_parts = [dataset, 'universal']
-        
-        removed_count = 0
-        for filename in os.listdir(cache_dir):
-            if all(part in filename for part in pattern_parts):
-                file_path = os.path.join(cache_dir, filename)
-                try:
-                    os.remove(file_path)
-                    print(f"🗑️ Removed: {filename}")
-                    removed_count += 1
-                except Exception as e:
-                    print(f"⚠️ Failed to remove {filename}: {e}")
-        
-        if removed_count == 0:
-            print("No matching cache files found")
-        else:
-            print(f"Removed {removed_count} cache files")
-    
-    def clear_similarity_cache(self):
-        """Clear only similarity matrix cache files (when changing similarity computation)"""
-        cache_dir = "../cache"
-        if not os.path.exists(cache_dir):
-            return
-        
-        dataset = self.config.get('dataset', 'unknown')
-        
-        # Look for similarity files only
-        pattern_parts = [dataset, 'universal', 'sim.pkl']
-        
-        removed_count = 0
-        for filename in os.listdir(cache_dir):
-            if all(part in filename for part in pattern_parts):
-                file_path = os.path.join(cache_dir, filename)
-                try:
-                    os.remove(file_path)
-                    print(f"🗑️ Removed similarity cache: {filename}")
-                    removed_count += 1
-                except Exception as e:
-                    print(f"⚠️ Failed to remove {filename}: {e}")
-        
-        if removed_count == 0:
-            print("No similarity cache files found")
-        else:
-            print(f"Removed {removed_count} similarity cache files")
-    
-    def clear_eigen_cache(self):
-        """Clear only eigendecomposition cache files (when changing eigen counts)"""
-        cache_dir = "../cache"
-        if not os.path.exists(cache_dir):
-            return
-        
-        dataset = self.config.get('dataset', 'unknown')
-        
-        # Look for eigen files only
-        pattern_parts = [dataset, 'universal', 'eigen']
-        
-        removed_count = 0
-        for filename in os.listdir(cache_dir):
-            if all(part in filename for part in pattern_parts):
-                file_path = os.path.join(cache_dir, filename)
-                try:
-                    os.remove(file_path)
-                    print(f"🗑️ Removed eigen cache: {filename}")
-                    removed_count += 1
-                except Exception as e:
-                    print(f"⚠️ Failed to remove {filename}: {e}")
-        
-        if removed_count == 0:
-            print("No eigen cache files found")
-        else:
-            print(f"Removed {removed_count} eigen cache files")
 
-    def debug_filter_learning(self):
-        """Debug what the filters are learning and identify filter patterns"""
-        print("\n=== FILTER LEARNING DEBUG (WITH CACHING) ===")
+
+class UserSpecificFilter(nn.Module):
+    """User-specific filter using complete filter collection"""
+    
+    def __init__(self, n_users, n_items, filter_order=6, init_filter_name='smooth', 
+                 shared_base=True, personalization_dim=16, filter_design='enhanced_basis', **kwargs):
+        super().__init__()
+        self.n_users = n_users
+        self.filter_order = filter_order
+        self.personalization_dim = personalization_dim
+        self.filter_design = filter_design
         
-        # Known filter patterns for comparison
-        filter_patterns = {
-            'butterworth': [1.0, -0.6, 0.2, -0.05, 0.01, -0.002, 0.0003, -0.00005],
-            'chebyshev': [1.0, -0.4, 0.1, -0.01, 0.001, -0.0001, 0.00001, -0.000001],
-            'smooth': [1.0, -0.5, 0.1, -0.02, 0.004, -0.0008, 0.00015, -0.00003],
-            'bessel': [1.0, -0.3, 0.06, -0.008, 0.0008, -0.00006, 0.000004, -0.0000002],
-            'gaussian': [1.0, -0.7, 0.15, -0.03, 0.005, -0.0007, 0.00008, -0.000008],
-            'conservative': [1.0, -0.2, 0.03, -0.002, 0.0001, -0.000005, 0.0000002, -0.00000001],
-            'aggressive': [1.0, -0.8, 0.3, -0.08, 0.015, -0.002, 0.0002, -0.00002]
-        }
+        # Create the actual filter using the factory function
+        self.base_filter = fl.create_filter(
+            filter_design, filter_order, init_filter_name, **kwargs
+        )
         
-        def analyze_filter_pattern(coeffs_tensor, filter_name):
-            """Analyze learned coefficients and find closest pattern"""
-            coeffs = coeffs_tensor.cpu().numpy()
-            print(f"\n{filter_name} Filter Analysis:")
-            print(f"  Learned coefficients: {coeffs}")
-            
-            # Find closest pattern
-            best_match = None
-            best_similarity = -1
-            
-            for pattern_name, pattern_coeffs in filter_patterns.items():
-                # Compare with same number of coefficients
-                pattern_truncated = pattern_coeffs[:len(coeffs)]
-                
-                # Calculate correlation coefficient
-                if len(coeffs) > 1 and len(pattern_truncated) > 1:
-                    correlation = np.corrcoef(coeffs, pattern_truncated)[0, 1]
-                    if not np.isnan(correlation) and correlation > best_similarity:
-                        best_similarity = correlation
-                        best_match = pattern_name
-            
-            # Determine filter characteristics
-            filter_type = classify_filter_behavior(coeffs)
-            
-            print(f"  📊 Filter Characteristics:")
-            print(f"     └─ Type: {filter_type}")
-            print(f"     └─ Closest pattern: {best_match} (similarity: {best_similarity:.3f})")
-            
-            # Pattern interpretation
-            if best_similarity > 0.9:
-                print(f"     └─ 🎯 Strong match to {best_match} filter!")
-            elif best_similarity > 0.7:
-                print(f"     └─ ✅ Good match to {best_match}-like behavior")
-            elif best_similarity > 0.5:
-                print(f"     └─ 🔄 Moderate similarity to {best_match}")
-            else:
-                print(f"     └─ 🆕 Learned unique pattern (not matching standard filters)")
-            
-            return best_match, best_similarity, filter_type
+        # Personalization layers
+        self.user_embeddings = nn.Embedding(n_users, personalization_dim)
+        self.adaptation_layer = nn.Linear(personalization_dim, filter_order + 1)
+        self.adaptation_scale = nn.Parameter(torch.tensor(0.12))
         
-        def classify_filter_behavior(coeffs):
-            """Classify the learned filter behavior"""
-            if len(coeffs) < 2:
-                return "constant"
-            
-            # Analyze coefficient pattern
-            c0, c1 = coeffs[0], coeffs[1]
-            
-            # Check for different behaviors
-            if abs(c0) > 0.8 and c1 < -0.3:
-                if len(coeffs) > 2 and coeffs[2] > 0:
-                    return "low-pass (strong)"
-                else:
-                    return "low-pass (moderate)"
-            elif abs(c0) < 0.3 and c1 > 0.3:
-                return "high-pass"
-            elif c0 > 0.5 and abs(c1) < 0.3:
-                return "conservative low-pass"
-            elif len(coeffs) > 2 and abs(coeffs[2]) > 0.1:
-                return "band-pass/complex"
-            else:
-                return "custom/mixed"
+        nn.init.normal_(self.user_embeddings.weight, 0, 0.008)
+        nn.init.xavier_uniform_(self.adaptation_layer.weight)
         
-        print(f"Cache Status:")
-        print(f"  └─ Cache directory: ../cache")
-        print(f"  └─ User eigenvalues: {self.u_n_eigen} (cached separately)")
-        print(f"  └─ Item eigenvalues: {self.i_n_eigen} (cached separately)")
+        print(f"🔧 UserFilter: {filter_design} ({init_filter_name})")
+    
+    def forward(self, eigenvalues, user_ids):
+        device = eigenvalues.device
         
-        with torch.no_grad():
-            # Analyze user filter
-            if self.filter in ['u', 'ui'] and self.user_filter is not None:
-                user_match, user_sim, user_type = analyze_filter_pattern(
-                    self.user_filter.coeffs, f"User ({self.u_n_eigen} eigenvalues)"
-                )
-                user_response = self.user_filter(self.user_eigenvals)
-                print(f"  Filter response range: [{user_response.min():.4f}, {user_response.max():.4f}]")
+        # Get base filter response
+        base_response = self.base_filter(eigenvalues)
+        
+        # Get user-specific adaptations
+        user_embeds = self.user_embeddings(user_ids)
+        adaptations = self.adaptation_layer(user_embeds)
+        adaptations = torch.tanh(adaptations) * self.adaptation_scale
+        
+        # Apply adaptations to the base response
+        # This creates user-specific variations of the filter
+        batch_size = user_ids.shape[0]
+        eigenval_size = eigenvalues.shape[0]
+        
+        # Expand base response for batch processing
+        if len(base_response.shape) == 1:
+            expanded_base = base_response.unsqueeze(0).expand(batch_size, -1)
+        else:
+            expanded_base = base_response
+        
+        # Apply polynomial adaptations
+        return self.apply_polynomial_adaptation(eigenvalues, adaptations, expanded_base)
+    
+    def apply_polynomial_adaptation(self, eigenvalues, user_coeffs, base_response):
+        """Apply user-specific polynomial adaptations"""
+        device = eigenvalues.device
+        batch_size, n_coeffs = user_coeffs.shape
+        
+        max_eigenval = torch.max(eigenvalues) + 1e-8
+        x = 2 * (eigenvalues / max_eigenval) - 1
+        
+        # Start with base response
+        result = base_response
+        
+        # Add polynomial corrections
+        correction = user_coeffs[:, 0:1]
+        if n_coeffs >= 2:
+            correction = correction + user_coeffs[:, 1:2] * x.unsqueeze(0)
+        
+        if n_coeffs >= 3:
+            T_prev = torch.ones_like(x).unsqueeze(0)
+            T_curr = x.unsqueeze(0)
             
-            # Analyze item filter
-            if self.filter in ['i', 'ui'] and self.item_filter is not None:
-                item_match, item_sim, item_type = analyze_filter_pattern(
-                    self.item_filter.coeffs, f"Item ({self.i_n_eigen} eigenvalues)"
-                )
-                item_response = self.item_filter(self.item_eigenvals)
-                print(f"  Filter response range: [{item_response.min():.4f}, {item_response.max():.4f}]")
+            for i in range(2, n_coeffs):
+                T_next = 2 * x.unsqueeze(0) * T_curr - T_prev
+                correction = correction + user_coeffs[:, i:i+1] * T_next
+                T_prev, T_curr = T_curr, T_next
+        
+        # Apply correction with clamping
+        corrected_result = result + 0.1 * torch.tanh(correction)
+        return torch.clamp(corrected_result, min=1e-6, max=2.0)
+
+
+class ItemSpecificFilter(nn.Module):
+    """Item-specific filter using complete filter collection"""
+    
+    def __init__(self, n_users, n_items, filter_order=6, init_filter_name='sharp',
+                 shared_base=True, personalization_dim=12, filter_design='chebyshev', **kwargs):
+        super().__init__()
+        self.n_users = n_users
+        self.filter_order = filter_order
+        self.personalization_dim = personalization_dim
+        self.filter_design = filter_design
+        
+        # Create the actual filter using the factory function
+        self.base_filter = fl.create_filter(
+            filter_design, filter_order, init_filter_name, **kwargs
+        )
+        
+        # Personalization layers
+        self.user_embeddings = nn.Embedding(n_users, personalization_dim)
+        self.adaptation_layer = nn.Linear(personalization_dim, filter_order + 1)
+        self.adaptation_scale = nn.Parameter(torch.tensor(0.18))
+        
+        nn.init.normal_(self.user_embeddings.weight, 0, 0.01)
+        nn.init.xavier_uniform_(self.adaptation_layer.weight)
+        
+        print(f"🔧 ItemFilter: {filter_design} ({init_filter_name})")
+    
+    def forward(self, eigenvalues, user_ids):
+        device = eigenvalues.device
+        
+        # Get base filter response
+        base_response = self.base_filter(eigenvalues)
+        
+        # Get user-specific adaptations
+        user_embeds = self.user_embeddings(user_ids)
+        adaptations = self.adaptation_layer(user_embeds)
+        adaptations = torch.tanh(adaptations) * self.adaptation_scale
+        
+        # Apply adaptations to the base response
+        batch_size = user_ids.shape[0]
+        
+        # Expand base response for batch processing
+        if len(base_response.shape) == 1:
+            expanded_base = base_response.unsqueeze(0).expand(batch_size, -1)
+        else:
+            expanded_base = base_response
+        
+        # Apply polynomial adaptations
+        return self.apply_polynomial_adaptation(eigenvalues, adaptations, expanded_base)
+    
+    def apply_polynomial_adaptation(self, eigenvalues, user_coeffs, base_response):
+        """Apply user-specific polynomial adaptations"""
+        device = eigenvalues.device
+        batch_size, n_coeffs = user_coeffs.shape
+        
+        max_eigenval = torch.max(eigenvalues) + 1e-8
+        x = 2 * (eigenvalues / max_eigenval) - 1
+        
+        # Start with base response
+        result = base_response
+        
+        # Add polynomial corrections
+        correction = user_coeffs[:, 0:1]
+        if n_coeffs >= 2:
+            correction = correction + user_coeffs[:, 1:2] * x.unsqueeze(0)
+        
+        if n_coeffs >= 3:
+            T_prev = torch.ones_like(x).unsqueeze(0)
+            T_curr = x.unsqueeze(0)
             
-            # Combination weights analysis
-            weights = torch.softmax(self.combination_weights, dim=0)
-            print(f"\n🔗 Combination Weights Analysis:")
-            print(f"  Raw weights: {weights.cpu().numpy()}")
+            for i in range(2, n_coeffs):
+                T_next = 2 * x.unsqueeze(0) * T_curr - T_prev
+                correction = correction + user_coeffs[:, i:i+1] * T_next
+                T_prev, T_curr = T_curr, T_next
+        
+        # Apply correction with clamping
+        corrected_result = result + 0.15 * torch.tanh(correction)
+        return torch.clamp(corrected_result, min=1e-6, max=2.0)
+
+
+class BipartiteSpecificFilter(nn.Module):
+    """Bipartite-specific filter using complete filter collection"""
+    
+    def __init__(self, n_users, n_items, filter_order=6, init_filter_name='smooth',
+                 shared_base=True, personalization_dim=20, filter_design='original', **kwargs):
+        super().__init__()
+        self.n_users = n_users
+        self.filter_order = filter_order
+        self.personalization_dim = personalization_dim
+        self.filter_design = filter_design
+        
+        # Create the actual filter using the factory function
+        self.base_filter = fl.create_filter(
+            filter_design, filter_order, init_filter_name, **kwargs
+        )
+        
+        # Personalization layers
+        self.user_embeddings = nn.Embedding(n_users, personalization_dim)
+        self.adaptation_layer = nn.Linear(personalization_dim, filter_order + 1)
+        self.adaptation_scale = nn.Parameter(torch.tensor(0.22))
+        self.user_item_interaction_weight = nn.Parameter(torch.tensor(1.0))
+        
+        nn.init.normal_(self.user_embeddings.weight, 0, 0.012)
+        nn.init.xavier_uniform_(self.adaptation_layer.weight)
+        
+        print(f"🔧 BipartiteFilter: {filter_design} ({init_filter_name})")
+    
+    def forward(self, eigenvalues, user_ids):
+        device = eigenvalues.device
+        
+        # Get base filter response
+        base_response = self.base_filter(eigenvalues)
+        
+        # Get user-specific adaptations
+        user_embeds = self.user_embeddings(user_ids)
+        adaptations = self.adaptation_layer(user_embeds)
+        adaptations = torch.tanh(adaptations) * self.adaptation_scale
+        
+        # Apply adaptations to the base response
+        batch_size = user_ids.shape[0]
+        
+        # Expand base response for batch processing
+        if len(base_response.shape) == 1:
+            expanded_base = base_response.unsqueeze(0).expand(batch_size, -1)
+        else:
+            expanded_base = base_response
+        
+        # Apply polynomial adaptations
+        return self.apply_polynomial_adaptation(eigenvalues, adaptations, expanded_base)
+    
+    def apply_polynomial_adaptation(self, eigenvalues, user_coeffs, base_response):
+        """Apply user-specific polynomial adaptations"""
+        device = eigenvalues.device
+        batch_size, n_coeffs = user_coeffs.shape
+        
+        max_eigenval = torch.max(eigenvalues) + 1e-8
+        x = 2 * (eigenvalues / max_eigenval) - 1
+        
+        # Start with base response
+        result = base_response
+        
+        # Add polynomial corrections
+        correction = user_coeffs[:, 0:1]
+        if n_coeffs >= 2:
+            correction = correction + user_coeffs[:, 1:2] * x.unsqueeze(0)
+        
+        if n_coeffs >= 3:
+            T_prev = torch.ones_like(x).unsqueeze(0)
+            T_curr = x.unsqueeze(0)
             
-            if self.filter == 'ui':
-                direct, item, user = weights.cpu().numpy()
-                print(f"  📈 Component Importance:")
-                print(f"     └─ Direct CF: {direct:.3f} ({'🔥 Dominant' if direct > 0.5 else '🔸 Moderate' if direct > 0.3 else '🔹 Minor'})")
-                print(f"     └─ Item filtering: {item:.3f} ({'🔥 Dominant' if item > 0.5 else '🔸 Moderate' if item > 0.3 else '🔹 Minor'})")
-                print(f"     └─ User filtering: {user:.3f} ({'🔥 Dominant' if user > 0.5 else '🔸 Moderate' if user > 0.3 else '🔹 Minor'})")
-            elif self.filter == 'u':
-                direct, user = weights.cpu().numpy()
-                print(f"     └─ Direct CF: {direct:.3f}")
-                print(f"     └─ User filtering: {user:.3f}")
-            elif self.filter == 'i':
-                direct, item = weights.cpu().numpy()
-                print(f"     └─ Direct CF: {direct:.3f}")
-                print(f"     └─ Item filtering: {item:.3f}")
-            
-            # Overall model interpretation
-            print(f"\n🎯 Overall Model Interpretation:")
-            if self.filter == 'ui':
-                if 'user_match' in locals() and 'item_match' in locals():
-                    print(f"  └─ User-side learned: {user_type} ({user_match}-like)")
-                    print(f"  └─ Item-side learned: {item_type} ({item_match}-like)")
-                    
-                    # Suggest what this means
-                    if user_type.startswith('low-pass') and item_type.startswith('low-pass'):
-                        print(f"  🔍 Model focuses on global patterns (popular items, broad preferences)")
-                    elif 'high-pass' in user_type or 'high-pass' in item_type:
-                        print(f"  🔍 Model emphasizes niche patterns (specific preferences)")
-                    else:
-                        print(f"  🔍 Model learned balanced filtering strategy")
-            
-        print("=== END DEBUG ===\n")
+            for i in range(2, n_coeffs):
+                T_next = 2 * x.unsqueeze(0) * T_curr - T_prev
+                correction = correction + user_coeffs[:, i:i+1] * T_next
+                T_prev, T_curr = T_curr, T_next
+        
+        # Apply correction with clamping and interaction weight
+        interaction_weight = torch.sigmoid(self.user_item_interaction_weight)
+        corrected_result = result + interaction_weight * 0.2 * torch.tanh(correction)
+        return torch.clamp(corrected_result, min=1e-6, max=2.0)
+
+
+# Simple configuration functions
+def get_fast_config():
+    return {
+        'user_filter_design': 'enhanced_basis',
+        'item_filter_design': 'chebyshev',
+        'bipartite_filter_design': 'original',
+        'user_personalization_dim': 8,
+        'item_personalization_dim': 6,
+        'bipartite_personalization_dim': 12,
+        'u_n_eigen': 16,
+        'i_n_eigen': 20,
+        'b_n_eigen': 18
+    }
+
+def get_standard_config():
+    return {
+        'user_filter_design': 'enhanced_basis',
+        'item_filter_design': 'chebyshev',
+        'bipartite_filter_design': 'original',
+        'user_personalization_dim': 16,
+        'item_personalization_dim': 12,
+        'bipartite_personalization_dim': 20
+    }
