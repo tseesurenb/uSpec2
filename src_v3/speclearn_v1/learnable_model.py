@@ -205,14 +205,14 @@ class SpectralCFLearnable(nn.Module):
                 with open(cache_file, 'wb') as f:
                     pickle.dump({
                         'user_sim': user_sim,
-                            'item_sim': item_sim,
-                            'bipartite_sim': bipartite_sim,
-                            'n_users': self.n_users,
-                            'n_items': self.n_items
-                        }, f)
-                    print(f"Cached similarity matrices")
-                except Exception as e:
-                    print(f"Failed to cache: {e}")
+                        'item_sim': item_sim,
+                        'bipartite_sim': bipartite_sim,
+                        'n_users': self.n_users,
+                        'n_items': self.n_items
+                    }, f)
+                print(f"Cached similarity matrices")
+            except Exception as e:
+                print(f"Failed to cache: {e}")
         
         # Compute eigendecompositions
         print("Computing eigendecompositions...")
