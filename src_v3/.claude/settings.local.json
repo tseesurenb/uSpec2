@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv:*)",
+      "Bash(grep:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(rsync:*)",
+      "Bash(python3:*)",
+      "Bash(ls:*)",
+      "Bash(/bin/bash -c \"cp -r '/Users/tseesuren/Desktop/ActiveResearch/dev/uSpecCF_v1/src_v3/speclearn_v1' '/Users/tseesuren/Desktop/ActiveResearch/dev/uSpecCF_v1/src_v3/speclearn_v2'\")",
+      "Bash(ditto:*)"
+    ],
+    "deny": []
+  }
+}

@@ -1,0 +1,441 @@
+{
+  "dataset": "ml-100k",
+  "eigenvalues": {
+    "u_n_eigen": 80,
+    "i_n_eigen": 400,
+    "b_n_eigen": 600,
+    "in_mat": "uib"
+  },
+  "search_order": "uib",
+  "best_combination": {
+    "user_filter": "jacobi",
+    "item_filter": "laguerre",
+    "bipartite_filter": "hermite",
+    "ndcg": 0.424337657110784,
+    "recall": 0.3431660008315825,
+    "precision": 0.29252386002120895
+  },
+  "search_log": [
+    {
+      "step": 1,
+      "view": "user",
+      "results": [
+        {
+          "user_filter": "original",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.19724284199363734,
+          "recall": 0.2507551531378053,
+          "ndcg": 0.304830240888152,
+          "test_time": 0.14751005172729492
+        },
+        {
+          "user_filter": "chebyshev",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.2204135737009544,
+          "recall": 0.2730021693424831,
+          "ndcg": 0.3354051777508665,
+          "test_time": 0.09275007247924805
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.22067868504772004,
+          "recall": 0.27287551172914337,
+          "ndcg": 0.33576295934727307,
+          "test_time": 0.07098913192749023
+        },
+        {
+          "user_filter": "legendre",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.22067868504772004,
+          "recall": 0.27287551172914337,
+          "ndcg": 0.33576295934727307,
+          "test_time": 0.06186795234680176
+        },
+        {
+          "user_filter": "laguerre",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.19262990455991513,
+          "recall": 0.2481032834575327,
+          "ndcg": 0.2994294588686422,
+          "test_time": 0.0629878044128418
+        },
+        {
+          "user_filter": "hermite",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.21314952279957583,
+          "recall": 0.2612447981555678,
+          "ndcg": 0.3252485298885812,
+          "test_time": 0.06113314628601074
+        },
+        {
+          "user_filter": "bernstein",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.20021208907741253,
+          "recall": 0.25353795159528164,
+          "ndcg": 0.30878674574102094,
+          "test_time": 0.06291317939758301
+        },
+        {
+          "user_filter": "multiscale",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.19840933191940616,
+          "recall": 0.258339663230256,
+          "ndcg": 0.3082555019900311,
+          "test_time": 0.06323099136352539
+        },
+        {
+          "user_filter": "bandstop",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.21341463414634146,
+          "recall": 0.2633161668255498,
+          "ndcg": 0.3258485192589982,
+          "test_time": 0.06347084045410156
+        },
+        {
+          "user_filter": "ensemble",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.20699893955461293,
+          "recall": 0.2608965467359469,
+          "ndcg": 0.3184280804088161,
+          "test_time": 0.06514096260070801
+        },
+        {
+          "user_filter": "golden",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.20737009544008483,
+          "recall": 0.26070777472739615,
+          "ndcg": 0.3190196013991641,
+          "test_time": 0.06039595603942871
+        },
+        {
+          "user_filter": "harmonic",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.1580593849416755,
+          "recall": 0.21677386918075045,
+          "ndcg": 0.2531986864218224,
+          "test_time": 0.06103396415710449
+        },
+        {
+          "user_filter": "spectral_basis",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.1998409331919406,
+          "recall": 0.25342245571555094,
+          "ndcg": 0.3086103345396953,
+          "test_time": 0.05976581573486328
+        },
+        {
+          "user_filter": "enhanced_basis",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.1998409331919406,
+          "recall": 0.25339417717189594,
+          "ndcg": 0.3085525809412646,
+          "test_time": 0.06006765365600586
+        }
+      ],
+      "best_so_far": {
+        "user_filter": "jacobi",
+        "item_filter": "original",
+        "bipartite_filter": "original",
+        "ndcg": 0.33576295934727307,
+        "recall": 0.27287551172914337,
+        "precision": 0.22067868504772004
+      }
+    },
+    {
+      "step": 2,
+      "view": "item",
+      "results": [
+        {
+          "user_filter": "jacobi",
+          "item_filter": "original",
+          "bipartite_filter": "original",
+          "precision": 0.22067868504772004,
+          "recall": 0.27287551172914337,
+          "ndcg": 0.33576295934727307,
+          "test_time": 0.06182575225830078
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "chebyshev",
+          "bipartite_filter": "original",
+          "precision": 0.2634676564156946,
+          "recall": 0.30289548404591204,
+          "ndcg": 0.3850428739926078,
+          "test_time": 0.06000995635986328
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "jacobi",
+          "bipartite_filter": "original",
+          "precision": 0.26659597030752913,
+          "recall": 0.30674534527308106,
+          "ndcg": 0.3891834724683031,
+          "test_time": 0.06644225120544434
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "legendre",
+          "bipartite_filter": "original",
+          "precision": 0.26659597030752913,
+          "recall": 0.30674534527308106,
+          "ndcg": 0.3891834724683031,
+          "test_time": 0.0612940788269043
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "original",
+          "precision": 0.2875397667020148,
+          "recall": 0.33514641769320336,
+          "ndcg": 0.4164112307763801,
+          "test_time": 0.06140017509460449
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "hermite",
+          "bipartite_filter": "original",
+          "precision": 0.2597030752916225,
+          "recall": 0.30106155804161594,
+          "ndcg": 0.3767130308205588,
+          "test_time": 0.06171703338623047
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "bernstein",
+          "bipartite_filter": "original",
+          "precision": 0.27099681866383885,
+          "recall": 0.3125567256975287,
+          "ndcg": 0.39529512880140527,
+          "test_time": 0.06036114692687988
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "multiscale",
+          "bipartite_filter": "original",
+          "precision": 0.2781548250265111,
+          "recall": 0.3240646146255933,
+          "ndcg": 0.40557371332056946,
+          "test_time": 0.06053519248962402
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "bandstop",
+          "bipartite_filter": "original",
+          "precision": 0.2564156945917285,
+          "recall": 0.2997018687911828,
+          "ndcg": 0.3763139558523319,
+          "test_time": 0.05983901023864746
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "ensemble",
+          "bipartite_filter": "original",
+          "precision": 0.2733828207847296,
+          "recall": 0.3158003632473515,
+          "ndcg": 0.3985487779573898,
+          "test_time": 0.06208992004394531
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "golden",
+          "bipartite_filter": "original",
+          "precision": 0.28292682926829266,
+          "recall": 0.3273498272583383,
+          "ndcg": 0.41123942852592876,
+          "test_time": 0.05983901023864746
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "harmonic",
+          "bipartite_filter": "original",
+          "precision": 0.2719512195121951,
+          "recall": 0.31537741995764906,
+          "ndcg": 0.395596889291232,
+          "test_time": 0.06010007858276367
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "spectral_basis",
+          "bipartite_filter": "original",
+          "precision": 0.2788971367974549,
+          "recall": 0.321719811499379,
+          "ndcg": 0.40556771693020366,
+          "test_time": 0.059967994689941406
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "enhanced_basis",
+          "bipartite_filter": "original",
+          "precision": 0.2788971367974549,
+          "recall": 0.322069206429269,
+          "ndcg": 0.40564620178710215,
+          "test_time": 0.061515092849731445
+        }
+      ],
+      "best_so_far": {
+        "user_filter": "jacobi",
+        "item_filter": "laguerre",
+        "bipartite_filter": "original",
+        "ndcg": 0.4164112307763801,
+        "recall": 0.33514641769320336,
+        "precision": 0.2875397667020148
+      }
+    },
+    {
+      "step": 3,
+      "view": "bipartite",
+      "results": [
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "original",
+          "precision": 0.2875397667020148,
+          "recall": 0.33514641769320336,
+          "ndcg": 0.4164112307763801,
+          "test_time": 0.0617070198059082
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "chebyshev",
+          "precision": 0.25986214209968184,
+          "recall": 0.2981540664126631,
+          "ndcg": 0.3732611486155201,
+          "test_time": 0.06076812744140625
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "jacobi",
+          "precision": 0.2597560975609756,
+          "recall": 0.2979505525163312,
+          "ndcg": 0.3729889243651273,
+          "test_time": 0.061676025390625
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "legendre",
+          "precision": 0.2597560975609756,
+          "recall": 0.2979505525163312,
+          "ndcg": 0.3729889243651273,
+          "test_time": 0.061263084411621094
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "laguerre",
+          "precision": 0.2725874867444326,
+          "recall": 0.3138129941485236,
+          "ndcg": 0.3912872767916617,
+          "test_time": 0.06106114387512207
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "hermite",
+          "precision": 0.29252386002120895,
+          "recall": 0.3431660008315825,
+          "ndcg": 0.424337657110784,
+          "test_time": 0.06142997741699219
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "bernstein",
+          "precision": 0.2702014846235419,
+          "recall": 0.31103002215038067,
+          "ndcg": 0.3880996206148994,
+          "test_time": 0.06144309043884277
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "multiscale",
+          "precision": 0.28001060445387066,
+          "recall": 0.3237108258665238,
+          "ndcg": 0.40316678069709766,
+          "test_time": 0.06004595756530762
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "bandstop",
+          "precision": 0.26214209968186636,
+          "recall": 0.3018741806433396,
+          "ndcg": 0.3773358343087645,
+          "test_time": 0.05994391441345215
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "ensemble",
+          "precision": 0.27942735949098624,
+          "recall": 0.3233497991047617,
+          "ndcg": 0.4041744644182361,
+          "test_time": 0.06188011169433594
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "golden",
+          "precision": 0.28600212089077415,
+          "recall": 0.3325476740117642,
+          "ndcg": 0.41394477832189125,
+          "test_time": 0.05987095832824707
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "harmonic",
+          "precision": 0.28865323435843054,
+          "recall": 0.33753597428405085,
+          "ndcg": 0.4178423565204896,
+          "test_time": 0.061450958251953125
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "spectral_basis",
+          "precision": 0.2896076352067869,
+          "recall": 0.33830691198687424,
+          "ndcg": 0.4195226241340001,
+          "test_time": 0.06078171730041504
+        },
+        {
+          "user_filter": "jacobi",
+          "item_filter": "laguerre",
+          "bipartite_filter": "enhanced_basis",
+          "precision": 0.28966065747613995,
+          "recall": 0.33845840418502604,
+          "ndcg": 0.41963576213480036,
+          "test_time": 0.05982327461242676
+        }
+      ],
+      "best_so_far": {
+        "user_filter": "jacobi",
+        "item_filter": "laguerre",
+        "bipartite_filter": "hermite",
+        "ndcg": 0.424337657110784,
+        "recall": 0.3431660008315825,
+        "precision": 0.29252386002120895
+      }
+    }
+  ],
+  "timestamp": "20250614_142431"
+}
