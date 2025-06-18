@@ -176,7 +176,7 @@ class SpectralCFLearnable(nn.Module):
         """Compute eigendecompositions for active views"""
         start = time.time()
         
-        # Try loading cached similarities
+        # Try loading cached similarities (always enabled for similarity matrices)
         cache_key = self.get_cache_key()
         cache_file = os.path.join(self.cache_dir, f"similarities_{cache_key}.pkl")
         
@@ -200,19 +200,19 @@ class SpectralCFLearnable(nn.Module):
             if 'b' in self.filter_views:
                 bipartite_sim = self._compute_bipartite_similarity()
             
-            # Cache similarities
+            # Always cache similarities
             try:
                 with open(cache_file, 'wb') as f:
                     pickle.dump({
                         'user_sim': user_sim,
-                        'item_sim': item_sim,
-                        'bipartite_sim': bipartite_sim,
-                        'n_users': self.n_users,
-                        'n_items': self.n_items
-                    }, f)
-                print(f"Cached similarity matrices")
-            except Exception as e:
-                print(f"Failed to cache: {e}")
+                            'item_sim': item_sim,
+                            'bipartite_sim': bipartite_sim,
+                            'n_users': self.n_users,
+                            'n_items': self.n_items
+                        }, f)
+                    print(f"Cached similarity matrices")
+                except Exception as e:
+                    print(f"Failed to cache: {e}")
         
         # Compute eigendecompositions
         print("Computing eigendecompositions...")
@@ -221,19 +221,22 @@ class SpectralCFLearnable(nn.Module):
             eigenvals, eigenvecs = eigsh(user_sim, k=min(self.u_n_eigen, user_sim.shape[0]-1), which='LM')
             self.register_buffer('user_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('user_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
-            print(f"User eigenvals[0:5]: {self.user_eigenvals[:5]}")
+            print(f"\nUser eigenvals ({len(self.user_eigenvals)} total):")
+            print(self.user_eigenvals.numpy())
         
         if 'i' in self.filter_views and item_sim is not None:
             eigenvals, eigenvecs = eigsh(item_sim, k=min(self.i_n_eigen, item_sim.shape[0]-1), which='LM')
             self.register_buffer('item_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('item_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
-            print(f"Item eigenvals[0:5]: {self.item_eigenvals[:5]}")
+            print(f"\nItem eigenvals ({len(self.item_eigenvals)} total):")
+            print(self.item_eigenvals.numpy())
         
         if 'b' in self.filter_views and bipartite_sim is not None:
             eigenvals, eigenvecs = eigsh(bipartite_sim, k=min(self.b_n_eigen, bipartite_sim.shape[0]-1), which='LM')
             self.register_buffer('bipartite_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('bipartite_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
-            print(f"Bipartite eigenvals[0:5]: {self.bipartite_eigenvals[:5]}")
+            print(f"\nBipartite eigenvals ({len(self.bipartite_eigenvals)} total):")
+            print(self.bipartite_eigenvals.numpy())
         
         print(f"Setup completed in {time.time() - start:.2f}s")
     
