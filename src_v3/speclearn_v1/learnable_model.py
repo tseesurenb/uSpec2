@@ -161,7 +161,16 @@ class SpectralCFLearnable(nn.Module):
             self.adj_mat.indices.tobytes() + 
             self.adj_mat.indptr.tobytes()
         ).hexdigest()
-        return f"gfcf_{self.n_users}_{self.n_items}_{adj_hash[:16]}"
+        
+        # Include configuration that affects similarity computation
+        gamma_str = ""
+        if self.learnable_gamma and hasattr(self, 'item_gamma'):
+            gamma_str = f"_gamma{self.item_gamma.item():.3f}"
+        
+        # Include active views to avoid loading wrong matrices
+        views_str = f"_views{self.filter_views}"
+        
+        return f"gfcf_{self.n_users}_{self.n_items}_{adj_hash[:16]}{views_str}{gamma_str}"
     
     def _setup_spectral_filters(self):
         """Compute eigendecompositions for active views"""
