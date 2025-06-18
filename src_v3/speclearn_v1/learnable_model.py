@@ -95,10 +95,6 @@ class SpectralCFLearnable(nn.Module):
             self.item_gamma = nn.Parameter(torch.tensor(0.5))
             print(f"Learnable gamma enabled for item view (init: 0.5)")
         
-        # Temperature scaling for user similarity
-        self.user_temperature = config.get('user_temperature', 0.1)
-        print(f"User similarity temperature: {self.user_temperature}")
-        
         # Precompute normalized adjacency for two-hop if needed
         if self.use_two_hop or self.raw_only:
             self._setup_two_hop_matrices()
@@ -165,9 +161,7 @@ class SpectralCFLearnable(nn.Module):
             self.adj_mat.indices.tobytes() + 
             self.adj_mat.indptr.tobytes()
         ).hexdigest()
-        # Include temperature in cache key to avoid using wrong cached similarity
-        temp_str = f"_temp{self.user_temperature}" if hasattr(self, 'user_temperature') else ""
-        return f"gfcf_{self.n_users}_{self.n_items}_{adj_hash[:16]}{temp_str}"
+        return f"gfcf_{self.n_users}_{self.n_items}_{adj_hash[:16]}"
     
     def _setup_spectral_filters(self):
         """Compute eigendecompositions for active views"""
@@ -257,7 +251,7 @@ class SpectralCFLearnable(nn.Module):
         print("Two-hop setup complete")
     
     def _compute_user_similarity(self):
-        """Compute user-user similarity with GF-CF normalization and temperature scaling"""
+        """Compute user-user similarity with GF-CF normalization"""
         # Row normalization
         rowsum = np.array(self.adj_mat.sum(axis=1))
         d_inv = np.power(rowsum, -0.5).flatten()
@@ -273,18 +267,7 @@ class SpectralCFLearnable(nn.Module):
         norm_adj = norm_adj.dot(d_mat)
         
         # User-user similarity
-        user_sim = norm_adj @ norm_adj.T
-        
-        # Apply temperature scaling to amplify strong similarities
-        # Only apply to non-zero entries for efficiency with sparse matrices
-        # Use temperature <= 0 to disable temperature scaling
-        if self.user_temperature > 0:
-            if sp.issparse(user_sim):
-                user_sim.data = np.exp(user_sim.data / self.user_temperature)
-            else:
-                user_sim = np.exp(user_sim / self.user_temperature)
-        
-        return user_sim
+        return norm_adj @ norm_adj.T
     
     def _compute_item_similarity(self):
         """Compute item-item similarity with learnable gamma normalization"""

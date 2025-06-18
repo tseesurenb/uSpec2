@@ -106,10 +106,6 @@ def parse_args():
     parser.add_argument('--learnable_gamma', action='store_true',
                        help='enable learnable gamma parameter for item view normalization')
     
-    # Temperature scaling for user similarity
-    parser.add_argument('--user_temperature', type=float, default=-1.0,
-                       help='temperature for user similarity scaling (lower = more selective)')
-    
     return parser.parse_args()
 
 
@@ -182,9 +178,6 @@ def get_config(args):
         
         # Learnable normalization
         'learnable_gamma': args.learnable_gamma,
-        
-        # Temperature scaling
-        'user_temperature': args.user_temperature,
     }
     
     return config
