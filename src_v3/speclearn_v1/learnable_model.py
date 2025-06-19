@@ -218,25 +218,37 @@ class SpectralCFLearnable(nn.Module):
         print("Computing eigendecompositions...")
         
         if 'u' in self.filter_views and user_sim is not None:
+            print(f"User similarity shape: {user_sim.shape}, type: {type(user_sim)}")
             eigenvals, eigenvecs = eigsh(user_sim, k=min(self.u_n_eigen, user_sim.shape[0]-1), which='LM')
             self.register_buffer('user_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('user_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
             print(f"\nUser eigenvals ({len(self.user_eigenvals)} total):")
-            print(self.user_eigenvals.numpy())
+            print(self.user_eigenvals.numpy()[:5])
         
         if 'i' in self.filter_views and item_sim is not None:
+            print(f"Item similarity shape: {item_sim.shape}, type: {type(item_sim)}")
+            print(f"Computing {min(self.i_n_eigen, item_sim.shape[0]-1)} eigenvalues for item similarity...")
             eigenvals, eigenvecs = eigsh(item_sim, k=min(self.i_n_eigen, item_sim.shape[0]-1), which='LM')
+            print(f"Raw eigenvals from eigsh: {eigenvals[:5]}...{eigenvals[-5:]}")
             self.register_buffer('item_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('item_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
             print(f"\nItem eigenvals ({len(self.item_eigenvals)} total):")
-            print(self.item_eigenvals.numpy())
+            print(self.item_eigenvals.numpy()[:5])
+            
+            # Check for duplicates with user eigenvals
+            if hasattr(self, 'user_eigenvals'):
+                overlap = 0
+                for i, val in enumerate(self.item_eigenvals):
+                    if val in self.user_eigenvals:
+                        overlap += 1
+                print(f"WARNING: {overlap} item eigenvalues match user eigenvalues!")
         
         if 'b' in self.filter_views and bipartite_sim is not None:
             eigenvals, eigenvecs = eigsh(bipartite_sim, k=min(self.b_n_eigen, bipartite_sim.shape[0]-1), which='LM')
             self.register_buffer('bipartite_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('bipartite_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
             print(f"\nBipartite eigenvals ({len(self.bipartite_eigenvals)} total):")
-            print(self.bipartite_eigenvals.numpy())
+            print(self.bipartite_eigenvals.numpy()[:5])
         
         print(f"Setup completed in {time.time() - start:.2f}s")
     
