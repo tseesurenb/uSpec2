@@ -18,3 +18,33 @@ python main.py --dataset yelp2018 --filter uib --user_lr 0.1 --item_lr 0.01 --bi
 Best NDCG@20: 0.0530
 
 ### AMAZON-BOOK
+
+
+  Recommended Learning Rates for Large Datasets:
+
+  Gowalla:
+
+  --user_lr 0.001 --item_lr 0.0001 --bipartite_lr 0.001
+
+  Yelp2018:
+
+  --user_lr 0.0005 --item_lr 0.00005 --bipartite_lr 0.0005
+
+  Rationale:
+
+  1. Item view needs smallest LR: Item similarities are denser and more stable, so smaller steps prevent overshooting
+  2. User/Bipartite can handle slightly larger LRs: These views are typically sparser and need more aggressive updates
+  3. Gowalla vs Yelp2018: Gowalla is sparser, so can handle slightly larger LRs than Yelp2018
+
+  Why these specific ratios work:
+
+  - Item LR = User LR / 10: Item view dominates on large datasets, so keep it stable
+  - Bipartite LR = User LR: Similar sparsity patterns, can use same LR
+  - Scale down for denser datasets: Yelp2018 is denser than Gowalla, so use smaller absolute values
+
+  Try these settings with your optimal configuration:
+  # Gowalla
+  python main.py --dataset gowalla --filter uib --user_lr 0.001 --item_lr 0.0001 --bipartite_lr 0.001 --epochs 80 --filter_type spectral_basis --full_training --loss mse --u 135 --i 300 --b 400
+
+  # Yelp2018  
+  python main.py --dataset yelp2018 --filter uib --user_lr 0.0005 --item_lr 0.00005 --bipartite_lr 0.0005 --epochs 80 --filter_type spectral_basis --full_training --loss mse --u 135 --i 300 --b 400

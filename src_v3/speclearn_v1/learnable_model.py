@@ -360,7 +360,7 @@ class SpectralCFLearnable(nn.Module):
         
         # Raw-only mode: just return two-hop propagation
         if self.raw_only:
-            return user_profiles @ self.norm_adj.T @ self.norm_adj
+            return user_profiles @ self.two_hop_matrix
         
         scores = []
         
