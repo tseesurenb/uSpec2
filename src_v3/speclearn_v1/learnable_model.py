@@ -270,8 +270,9 @@ class SpectralCFLearnable(nn.Module):
         # Normalized adjacency matrix
         norm_adj = d_mat_u.dot(self.adj_mat).dot(d_mat_i)
         
-        # Convert to dense tensor for GPU operations
-        self.register_buffer('norm_adj', torch.tensor(norm_adj.toarray(), dtype=torch.float32).to(self.device))
+        # Precompute two-hop matrix: norm_adj.T @ norm_adj
+        two_hop_matrix = norm_adj.T @ norm_adj
+        self.register_buffer('two_hop_matrix', torch.tensor(two_hop_matrix.toarray(), dtype=torch.float32).to(self.device))
         print("Two-hop setup complete")
     
     def _compute_user_similarity(self):
@@ -404,8 +405,8 @@ class SpectralCFLearnable(nn.Module):
         
         # Add two-hop propagation if enabled
         if self.use_two_hop:
-            # Two-hop: user_profiles @ norm_adj.T @ norm_adj
-            two_hop_scores = user_profiles @ self.norm_adj.T @ self.norm_adj
+            # Two-hop: user_profiles @ precomputed_two_hop_matrix
+            two_hop_scores = user_profiles @ self.two_hop_matrix
             
             # Combine with learnable weight
             if self.dataset == 'amazon-book':
