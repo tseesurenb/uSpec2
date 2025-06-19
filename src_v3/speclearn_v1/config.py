@@ -97,7 +97,7 @@ def parse_args():
     # Two-hop propagation
     parser.add_argument('--use_two_hop', action='store_true',
                        help='enable two-hop propagation (like GF-CF)')
-    parser.add_argument('--two_hop_weight', type=float, default=0.3,
+    parser.add_argument('--two_hop_weight', type=float, default=1.3,
                        help='weight for two-hop propagation (ignored for amazon-book)')
     parser.add_argument('--raw_only', action='store_true',
                        help='use only raw two-hop propagation, no spectral filtering')

@@ -17,6 +17,11 @@ python main.py --dataset yelp2018 --filter uib --user_lr 0.1 --item_lr 0.01 --bi
 
 Best NDCG@20: 0.0530
 
+python main.py --dataset yelp2018  --full_training --u 135 --i 300 --b 400 --filter_type spectral_basis --filter uib --loss mse --use_two_hop --epochs 200
+
+Best NDCG@20: 0.0584
+
+
 ### AMAZON-BOOK
 
 
@@ -29,6 +34,8 @@ Best NDCG@20: 0.0530
   Yelp2018:
 
   --user_lr 0.0005 --item_lr 0.00005 --bipartite_lr 0.0005
+
+
 
   Rationale:
 
