@@ -82,6 +82,7 @@ class BernsteinFilter(nn.Module):
             bernstein_basis = (comb(n, k) * 
                              torch.pow(eigenvals, k) * 
                              torch.pow(1 - eigenvals, n - k))
+            
             result += coeffs[k] * bernstein_basis
             
         return result

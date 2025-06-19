@@ -102,9 +102,7 @@ def parse_args():
     parser.add_argument('--raw_only', action='store_true',
                        help='use only raw two-hop propagation, no spectral filtering')
     
-    # Learnable normalization (PolyCF inspired)
-    parser.add_argument('--learnable_gamma', action='store_true',
-                       help='enable learnable gamma parameter for item view normalization')
+    # Removed learnable gamma - using standard GF-CF normalization
     
     return parser.parse_args()
 
@@ -176,8 +174,7 @@ def get_config(args):
         'two_hop_weight': args.two_hop_weight,
         'raw_only': args.raw_only,
         
-        # Learnable normalization
-        'learnable_gamma': args.learnable_gamma,
+        # Removed learnable normalization
     }
     
     return config

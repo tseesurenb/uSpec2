@@ -88,12 +88,7 @@ class SpectralCFLearnable(nn.Module):
         self.raw_only = config.get('raw_only', False)  # New: raw propagation only mode
         self.two_hop_weight = nn.Parameter(torch.tensor(config.get('two_hop_weight', 0.3)))
         
-        # Learnable normalization parameter for item view (PolyCF inspired)
-        self.learnable_gamma = config.get('learnable_gamma', True)
-        if self.learnable_gamma and 'i' in self.filter_views:
-            # Initialize gamma to 0.5 (standard GF-CF normalization)
-            self.item_gamma = nn.Parameter(torch.tensor(0.5))
-            print(f"Learnable gamma enabled for item view (init: 0.5)")
+        # Removed learnable gamma - use standard GF-CF normalization (gamma=0.5)
         
         # Precompute normalized adjacency for two-hop if needed
         if self.use_two_hop or self.raw_only:
@@ -104,55 +99,28 @@ class SpectralCFLearnable(nn.Module):
         print(f"Filter type: {filter_type}, order: {filter_order}")
         print(f"Eigenvalues: u={self.u_n_eigen}, i={self.i_n_eigen}, b={self.b_n_eigen}")
         
-        # Store raw matrices for learnable gamma
-        if self.learnable_gamma and 'i' in self.filter_views:
-            self._store_raw_matrices()
+        # Check if we need memory-efficient mode
+        self.use_memory_efficient = self.dataset == 'amazon-book' or self.n_items > 100000
         
         # Compute eigendecompositions (skip if raw_only mode)
         if not self.raw_only:
-            self._setup_spectral_filters()
+            if self.use_memory_efficient:
+                self._setup_spectral_filters_memory_efficient()
+            else:
+                self._setup_spectral_filters()
     
-    def _store_raw_matrices(self):
-        """Store raw degree matrices for learnable gamma computation"""
-        print("Storing raw matrices for learnable gamma...")
+    def _setup_spectral_filters_memory_efficient(self):
+        """Memory-efficient setup for large datasets like Amazon-book"""
+        from memory_efficient_spectral import MemoryEfficientSpectralCF
         
-        # User degrees
-        rowsum = np.array(self.adj_mat.sum(axis=1))
-        self.user_degrees = torch.tensor(rowsum.flatten(), dtype=torch.float32).to(self.device)
+        print(f"Using memory-efficient spectral setup for {self.dataset}")
+        print(f"Dataset size: {self.n_users} users, {self.n_items} items")
         
-        # Item degrees  
-        colsum = np.array(self.adj_mat.sum(axis=0))
-        self.item_degrees = torch.tensor(colsum.flatten(), dtype=torch.float32).to(self.device)
+        # Create memory-efficient wrapper
+        efficient_wrapper = MemoryEfficientSpectralCF(self)
+        efficient_wrapper.setup_spectral_filters_efficient()
         
-        print("Raw matrices stored")
-    
-    def _compute_item_eigenvectors_dynamic(self):
-        """Compute item eigenvectors with current gamma value"""
-        gamma = self.item_gamma
-        
-        # Apply learnable normalization: D_u^{-γ} R D_i^{γ-1}
-        user_norm = torch.pow(self.user_degrees + 1e-10, -gamma).unsqueeze(1)  # (n_users, 1)
-        item_norm = torch.pow(self.item_degrees + 1e-10, gamma - 1.0).unsqueeze(0)  # (1, n_items)
-        
-        # Normalize adjacency matrix
-        norm_adj = self.adj_tensor * user_norm * item_norm  # Broadcasting
-        
-        # Compute item-item similarity: norm_adj.T @ norm_adj
-        item_sim = norm_adj.T @ norm_adj  # (n_items, n_items)
-        
-        # Eigendecomposition
-        try:
-            eigenvals, eigenvecs = torch.linalg.eigh(item_sim)
-            # Sort by eigenvalue magnitude (descending)
-            idx = torch.argsort(torch.abs(eigenvals), descending=True)
-            eigenvals = eigenvals[idx[:self.i_n_eigen]]
-            eigenvecs = eigenvecs[:, idx[:self.i_n_eigen]]
-        except:
-            # Fallback to existing eigenvectors if computation fails
-            eigenvals = self.item_eigenvals
-            eigenvecs = self.item_eigenvecs
-        
-        return eigenvecs, eigenvals
+        print("Memory-efficient setup completed")
     
     def get_cache_key(self):
         """Generate cache key for similarity matrices"""
@@ -162,15 +130,10 @@ class SpectralCFLearnable(nn.Module):
             self.adj_mat.indptr.tobytes()
         ).hexdigest()
         
-        # Include configuration that affects similarity computation
-        gamma_str = ""
-        if self.learnable_gamma and hasattr(self, 'item_gamma'):
-            gamma_str = f"_gamma{self.item_gamma.item():.3f}"
-        
         # Include active views to avoid loading wrong matrices
         views_str = f"_views{self.filter_views}"
         
-        return f"gfcf_{self.n_users}_{self.n_items}_{adj_hash[:16]}{views_str}{gamma_str}"
+        return f"gfcf_{self.n_users}_{self.n_items}_{adj_hash[:16]}{views_str}"
     
     def _setup_spectral_filters(self):
         """Compute eigendecompositions for active views"""
@@ -295,39 +258,19 @@ class SpectralCFLearnable(nn.Module):
         return norm_adj @ norm_adj.T
     
     def _compute_item_similarity(self):
-        """Compute item-item similarity with learnable gamma normalization"""
-        if self.learnable_gamma and hasattr(self, 'item_gamma'):
-            # Use learnable gamma parameter: D^{-γ} R D^{γ-1}
-            gamma = self.item_gamma.item()  # Get current value
-            print(f"Using learnable gamma normalization: γ={gamma:.3f}")
-            
-            # User degree normalization: D_u^{-γ}
-            rowsum = np.array(self.adj_mat.sum(axis=1))
-            d_inv_u = np.power(rowsum, -gamma).flatten()
-            d_inv_u[np.isinf(d_inv_u)] = 0.
-            d_mat_u = sp.diags(d_inv_u)
-            
-            # Item degree normalization: D_i^{γ-1}
-            colsum = np.array(self.adj_mat.sum(axis=0))
-            d_inv_i = np.power(colsum, gamma - 1.0).flatten()
-            d_inv_i[np.isinf(d_inv_i)] = 0.
-            d_mat_i = sp.diags(d_inv_i)
-            
-            # Apply generalized normalization
-            norm_adj = d_mat_u.dot(self.adj_mat).dot(d_mat_i)
-        else:
-            # Standard GF-CF normalization (γ=0.5)
-            rowsum = np.array(self.adj_mat.sum(axis=1))
-            d_inv = np.power(rowsum, -0.5).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat = sp.diags(d_inv)
-            norm_adj = d_mat.dot(self.adj_mat)
-            
-            colsum = np.array(self.adj_mat.sum(axis=0))
-            d_inv = np.power(colsum, -0.5).flatten()
-            d_inv[np.isinf(d_inv)] = 0.
-            d_mat = sp.diags(d_inv)
-            norm_adj = norm_adj.dot(d_mat)
+        """Compute item-item similarity with standard GF-CF normalization"""
+        # Standard GF-CF normalization (γ=0.5)
+        rowsum = np.array(self.adj_mat.sum(axis=1))
+        d_inv = np.power(rowsum, -0.5).flatten()
+        d_inv[np.isinf(d_inv)] = 0.
+        d_mat = sp.diags(d_inv)
+        norm_adj = d_mat.dot(self.adj_mat)
+        
+        colsum = np.array(self.adj_mat.sum(axis=0))
+        d_inv = np.power(colsum, -0.5).flatten()
+        d_inv[np.isinf(d_inv)] = 0.
+        d_mat = sp.diags(d_inv)
+        norm_adj = norm_adj.dot(d_mat)
         
         # Item-item similarity
         return norm_adj.T @ norm_adj
@@ -378,13 +321,8 @@ class SpectralCFLearnable(nn.Module):
         if 'i' in self.filter_views and hasattr(self, 'item_eigenvals'):
             filter_response = self.item_filter(self.item_eigenvals)
             
-            # Check if we need to recompute item similarity with learnable gamma
-            if self.learnable_gamma and hasattr(self, 'item_gamma'):
-                item_eigenvecs, item_eigenvals = self._compute_item_eigenvectors_dynamic()
-                item_filtered = user_profiles @ item_eigenvecs @ torch.diag(filter_response) @ item_eigenvecs.T
-            else:
-                # Standard item filtering
-                item_filtered = user_profiles @ self.item_eigenvecs @ torch.diag(filter_response) @ self.item_eigenvecs.T
+            # Standard item filtering
+            item_filtered = user_profiles @ self.item_eigenvecs @ torch.diag(filter_response) @ self.item_eigenvecs.T
             
             scores.append(item_filtered)
         
@@ -409,12 +347,7 @@ class SpectralCFLearnable(nn.Module):
             two_hop_scores = user_profiles @ self.two_hop_matrix
             
             # Combine with learnable weight
-            if self.dataset == 'amazon-book':
-                # For Amazon-book, GF-CF only uses two-hop
-                final_scores = two_hop_scores
-            else:
-                # For other datasets, combine spectral and two-hop
-                final_scores = final_scores + self.two_hop_weight * two_hop_scores
+            final_scores = final_scores + self.two_hop_weight * two_hop_scores
         
         return final_scores
     
@@ -454,21 +387,12 @@ class SpectralCFLearnable(nn.Module):
             })
         
         # Add two-hop weight if enabled
-        if self.use_two_hop and self.dataset != 'amazon-book':
+        if self.use_two_hop:
             groups.append({
                 'params': [self.two_hop_weight],
                 'lr': 0.01,  # Use a moderate learning rate for the weight
                 'weight_decay': 0,
                 'name': 'two_hop_weight'
-            })
-        
-        # Add learnable gamma parameter if enabled
-        if self.learnable_gamma and hasattr(self, 'item_gamma'):
-            groups.append({
-                'params': [self.item_gamma],
-                'lr': 0.001,  # Small learning rate for gamma parameter
-                'weight_decay': 0,
-                'name': 'item_gamma'
             })
         
         return groups
