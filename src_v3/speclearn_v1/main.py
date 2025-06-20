@@ -2,6 +2,9 @@
 Main training script for Learnable Spectral CF
 Self-contained version
 """
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, message="Can't initialize NVML")
+
 import torch
 import numpy as np
 import time

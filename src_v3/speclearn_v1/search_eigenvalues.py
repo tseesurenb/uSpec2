@@ -4,6 +4,8 @@ Eigenvalue Search for Learnable Spectral CF
 Compute eigendecomposition once, then test different eigenvalue counts
 Much faster than recomputing eigendecomposition for each combination
 """
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning, message="Can't initialize NVML")
 
 import sys
 import os

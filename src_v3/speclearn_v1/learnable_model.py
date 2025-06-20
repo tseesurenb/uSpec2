@@ -99,28 +99,11 @@ class SpectralCFLearnable(nn.Module):
         print(f"Filter type: {filter_type}, order: {filter_order}")
         print(f"Eigenvalues: u={self.u_n_eigen}, i={self.i_n_eigen}, b={self.b_n_eigen}")
         
-        # Check if we need memory-efficient mode
-        self.use_memory_efficient = self.dataset == 'amazon-book' or self.n_items > 100000
-        
         # Compute eigendecompositions (skip if raw_only mode)
         if not self.raw_only:
-            if self.use_memory_efficient:
-                self._setup_spectral_filters_memory_efficient()
-            else:
-                self._setup_spectral_filters()
+            self._setup_spectral_filters()
     
-    def _setup_spectral_filters_memory_efficient(self):
-        """Memory-efficient setup for large datasets like Amazon-book"""
-        from memory_efficient_spectral import MemoryEfficientSpectralCF
-        
-        print(f"Using memory-efficient spectral setup for {self.dataset}")
-        print(f"Dataset size: {self.n_users} users, {self.n_items} items")
-        
-        # Create memory-efficient wrapper
-        efficient_wrapper = MemoryEfficientSpectralCF(self)
-        efficient_wrapper.setup_spectral_filters_efficient()
-        
-        print("Memory-efficient setup completed")
+    # Removed learnable gamma methods - using standard GF-CF normalization
     
     def get_cache_key(self):
         """Generate cache key for similarity matrices"""
@@ -186,7 +169,7 @@ class SpectralCFLearnable(nn.Module):
             self.register_buffer('user_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('user_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
             print(f"\nUser eigenvals ({len(self.user_eigenvals)} total):")
-            print(self.user_eigenvals.numpy()[:5])
+            print(self.user_eigenvals.cpu().numpy()[:5])
         
         if 'i' in self.filter_views and item_sim is not None:
             print(f"Item similarity shape: {item_sim.shape}, type: {type(item_sim)}")
@@ -196,7 +179,7 @@ class SpectralCFLearnable(nn.Module):
             self.register_buffer('item_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('item_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
             print(f"\nItem eigenvals ({len(self.item_eigenvals)} total):")
-            print(self.item_eigenvals.numpy()[:5])
+            print(self.item_eigenvals.cpu().numpy()[:5])
             
             # Check for duplicates with user eigenvals
             if hasattr(self, 'user_eigenvals'):
@@ -211,7 +194,7 @@ class SpectralCFLearnable(nn.Module):
             self.register_buffer('bipartite_eigenvals', torch.tensor(eigenvals, dtype=torch.float32).to(self.device))
             self.register_buffer('bipartite_eigenvecs', torch.tensor(eigenvecs, dtype=torch.float32).to(self.device))
             print(f"\nBipartite eigenvals ({len(self.bipartite_eigenvals)} total):")
-            print(self.bipartite_eigenvals.numpy()[:5])
+            print(self.bipartite_eigenvals.cpu().numpy()[:5])
         
         print(f"Setup completed in {time.time() - start:.2f}s")
     
