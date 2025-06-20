@@ -18,7 +18,7 @@ def parse_args():
     # Model architecture
     parser.add_argument('--filter', type=str, default='uib', 
                        help='which views to use: u, i, b, ui, ub, ib, uib')
-    parser.add_argument('--filter_type', type=str, default='bernstein',
+    parser.add_argument('--filter_type', type=str, default='spectral_basis',
                        choices=['bernstein', 'chebyshev', 'spectral_basis'],
                        help='type of learnable filter')
     parser.add_argument('--filter_order', type=int, default=8,
