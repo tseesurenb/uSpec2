@@ -19,11 +19,13 @@ import itertools
 import time
 import pandas as pd
 from datetime import datetime
+import copy
 
 # Import from current directory
 from learnable_model import SpectralCFLearnable
 from dataloader import Loader
 from main import get_optimizer, Test, MSE_train_learnable, BPR_train_learnable
+from learnable_filters import LearnableSpectralFilter
 import utils
 
 # Restore original sys.argv
@@ -71,23 +73,37 @@ class InitPatternSearcher:
     
     def create_model_with_init(self, u_init, i_init, b_init):
         """Create a new model with specific initialization patterns"""
-        # Update config with new init patterns
+        # Create a copy of the base model
+        import copy
+        model = copy.deepcopy(self.base_model)
+        
+        # Update the filter initializations
         new_config = self.config.copy()
         new_config['user_init'] = u_init
         new_config['item_init'] = i_init
         new_config['bipartite_init'] = b_init
         
-        # Create new model
-        model = SpectralCFLearnable(self.dataset.UserItemNet, new_config).to(self.config['device'])
+        # Reinitialize only the filters with new patterns
+        if hasattr(model, 'user_filter'):
+            model.user_filter = LearnableSpectralFilter(
+                filter_type=new_config['filter_type'],
+                order=new_config['filter_order'],
+                init_type=u_init
+            )
         
-        # Copy eigendecompositions from base model (skip recomputation!)
-        with torch.no_grad():
-            for key, value in self.base_state.items():
-                if hasattr(model, key):
-                    setattr(model, key, value.clone())
+        if hasattr(model, 'item_filter'):
+            model.item_filter = LearnableSpectralFilter(
+                filter_type=new_config['filter_type'],
+                order=new_config['filter_order'],
+                init_type=i_init
+            )
         
-        # The filters are already initialized with the new patterns
-        # No need to recompute eigendecomposition
+        if hasattr(model, 'bipartite_filter'):
+            model.bipartite_filter = LearnableSpectralFilter(
+                filter_type=new_config['filter_type'],
+                order=new_config['filter_order'],
+                init_type=b_init
+            )
         
         return model
     
