@@ -30,13 +30,18 @@ def run_experiment(dataset, u_init, i_init, b_init, base_args):
     # Add base arguments
     for key, value in base_args.items():
         if key.startswith('--'):
-            cmd.extend([key, str(value)])
+            if value == '':  # For flags like --full_training
+                cmd.append(key)
+            else:
+                cmd.extend([key, str(value)])
         else:
             cmd.append(f'--{key}')
     
     # Run command and capture output
     try:
         print(f"Running: u={u_init}, i={i_init}, b={b_init}")
+        # Debug: print the command
+        print(f"  Command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30 min timeout
         
         # Parse output for best NDCG
@@ -147,6 +152,7 @@ if __name__ == "__main__":
     parser.add_argument('--user_lr', type=float, default=0.05, help='user learning rate')
     parser.add_argument('--item_lr', type=float, default=0.05, help='item learning rate')
     parser.add_argument('--bipartite_lr', type=float, default=0.05, help='bipartite learning rate')
+    parser.add_argument('--eval_freq', type=int, default=10, help='evaluation frequency')
     
     args = parser.parse_args()
     
@@ -164,7 +170,7 @@ if __name__ == "__main__":
         '--user_lr': str(args.user_lr),
         '--item_lr': str(args.item_lr),
         '--bipartite_lr': str(args.bipartite_lr),
-        '--eval_freq': '10'  # Evaluate less frequently for speed
+        '--eval_freq': str(args.eval_freq)
     }
     
     # All available init patterns
