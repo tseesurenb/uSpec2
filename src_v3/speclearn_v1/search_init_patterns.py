@@ -1,104 +1,141 @@
 #!/usr/bin/env python
 """
-Search for optimal initialization patterns for spectral filters
-Tests all combinations of init patterns for u, i, b views
+Efficient Search for optimal initialization patterns for spectral filters
+Loads data once and only changes filter initialization between experiments
 """
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, message="Can't initialize NVML")
 
 import sys
 import os
+
+# Temporarily override sys.argv to prevent config.py from parsing our args
+original_argv = sys.argv
+sys.argv = [sys.argv[0]]  # Keep only script name
+
+import torch
+import numpy as np
 import itertools
 import time
 import pandas as pd
-import subprocess
-import json
 from datetime import datetime
 
-def run_experiment(dataset, u_init, i_init, b_init, base_args):
-    """Run a single experiment with given init patterns"""
+# Import from current directory
+from learnable_model import SpectralCFLearnable
+from dataloader import Loader
+from main import get_optimizer, Test, MSE_train_learnable, BPR_train_learnable
+import utils
+
+# Restore original sys.argv
+sys.argv = original_argv
+
+
+class InitPatternSearcher:
+    """Efficient searcher that reuses eigendecomposition"""
     
-    # Build command
-    cmd = [
-        'python', 'main.py',
-        '--dataset', dataset,
-        '--user_init', u_init,
-        '--item_init', i_init, 
-        '--bipartite_init', b_init
-    ]
-    
-    # Add base arguments
-    for key, value in base_args.items():
-        if key.startswith('--'):
-            if value == '':  # For flags like --full_training
-                cmd.append(key)
-            else:
-                cmd.extend([key, str(value)])
-        else:
-            cmd.append(f'--{key}')
-    
-    # Run command and capture output
-    try:
-        print(f"Running: u={u_init}, i={i_init}, b={b_init}")
-        # Debug: print the command
-        print(f"  Command: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30 min timeout
+    def __init__(self, dataset_name, config):
+        self.dataset_name = dataset_name
+        self.config = config
         
-        # Parse output for best NDCG
+        print(f"📊 Loading dataset {dataset_name}...")
+        self.dataset = Loader(config)
+        
+        print(f"🔧 Creating base model...")
+        # Create model with default initialization
+        self.base_model = SpectralCFLearnable(self.dataset.UserItemNet, config).to(config['device'])
+        
+        # Store the eigendecompositions and base tensors
+        self.store_base_state()
+        
+    def store_base_state(self):
+        """Store eigendecompositions and other reusable components"""
+        self.base_state = {}
+        
+        # Store eigendecompositions
+        if hasattr(self.base_model, 'user_eigenvals'):
+            self.base_state['user_eigenvals'] = self.base_model.user_eigenvals.clone()
+            self.base_state['user_eigenvecs'] = self.base_model.user_eigenvecs.clone()
+            
+        if hasattr(self.base_model, 'item_eigenvals'):
+            self.base_state['item_eigenvals'] = self.base_model.item_eigenvals.clone()
+            self.base_state['item_eigenvecs'] = self.base_model.item_eigenvecs.clone()
+            
+        if hasattr(self.base_model, 'bipartite_eigenvals'):
+            self.base_state['bipartite_eigenvals'] = self.base_model.bipartite_eigenvals.clone()
+            self.base_state['bipartite_eigenvecs'] = self.base_model.bipartite_eigenvecs.clone()
+            
+        # Store other tensors
+        self.base_state['adj_tensor'] = self.base_model.adj_tensor.clone()
+        if hasattr(self.base_model, 'two_hop_matrix'):
+            self.base_state['two_hop_matrix'] = self.base_model.two_hop_matrix.clone()
+    
+    def create_model_with_init(self, u_init, i_init, b_init):
+        """Create a new model with specific initialization patterns"""
+        # Update config with new init patterns
+        new_config = self.config.copy()
+        new_config['user_init'] = u_init
+        new_config['item_init'] = i_init
+        new_config['bipartite_init'] = b_init
+        
+        # Create new model
+        model = SpectralCFLearnable(self.dataset.UserItemNet, new_config).to(self.config['device'])
+        
+        # Copy eigendecompositions from base model (skip recomputation!)
+        with torch.no_grad():
+            for key, value in self.base_state.items():
+                if hasattr(model, key):
+                    setattr(model, key, value.clone())
+        
+        # The filters are already initialized with the new patterns
+        # No need to recompute eigendecomposition
+        
+        return model
+    
+    def evaluate_init_pattern(self, u_init, i_init, b_init):
+        """Evaluate a specific init pattern combination"""
+        # Create model with specific initialization
+        model = self.create_model_with_init(u_init, i_init, b_init)
+        
+        # Create optimizer
+        optimizer = get_optimizer(model, self.config)
+        
+        # Training
         best_ndcg = 0.0
         best_recall = 0.0
         best_precision = 0.0
-        current_ndcg = 0.0
         
-        # Debug: print first few lines of output
-        output_lines = result.stdout.split('\n')
-        if len(output_lines) < 100:  # If output is suspiciously short
-            print(f"  WARNING: Short output ({len(output_lines)} lines)")
-            print(f"  stderr: {result.stderr[:500]}")  # Print first 500 chars of stderr
+        start_time = time.time()
         
-        for line in output_lines:
-            # Parse epoch results (Test/Validation NDCG@20: X.XXXX | Recall@20: X.XXXX | Precision@20: X.XXXX)
-            if ('Test NDCG@20:' in line or 'Validation NDCG@20:' in line) and '|' in line:
-                try:
-                    # Extract all metrics from the same line
-                    if 'Test NDCG@20:' in line:
-                        ndcg_part = line.split('Test NDCG@20:')[1].split('|')[0].strip()
-                    else:
-                        ndcg_part = line.split('Validation NDCG@20:')[1].split('|')[0].strip()
-                    current_ndcg = float(ndcg_part)
-                    
-                    if 'Recall@20:' in line:
-                        recall_part = line.split('Recall@20:')[1].split('|')[0].strip()
-                        current_recall = float(recall_part)
-                    else:
-                        current_recall = 0.0
-                        
-                    if 'Precision@20:' in line:
-                        precision_part = line.split('Precision@20:')[1].strip()
-                        current_precision = float(precision_part.split()[0])
-                    else:
-                        current_precision = 0.0
-                    
-                    # Update best metrics if this is better
-                    if current_ndcg > best_ndcg:
-                        best_ndcg = current_ndcg
-                        best_recall = current_recall
-                        best_precision = current_precision
-                except Exception as e:
-                    print(f"  Error parsing line: {line}")
-                    print(f"  Error: {e}")
+        for epoch in range(self.config['epochs']):
+            # Train
+            model.train()
+            if self.config['loss'] == 'mse':
+                mse_loss = MSE_train_learnable(self.dataset, model, optimizer)
+                if epoch % 20 == 0:
+                    print(f"    Epoch {epoch+1}: MSE Loss = {mse_loss:.4f}")
+            else:
+                bpr_loss = BPR_train_learnable(self.dataset, model, optimizer)
+                if epoch % 20 == 0:
+                    print(f"    Epoch {epoch+1}: BPR Loss = {bpr_loss:.4f}")
             
-            # Also check for final best NDCG
-            elif 'Best NDCG@20:' in line:
-                try:
-                    parts = line.split('Best NDCG@20:')[1].strip()
-                    final_best = float(parts.split()[0])
-                    # Only update if we haven't found metrics yet
-                    if best_ndcg == 0.0:
-                        best_ndcg = final_best
-                except Exception as e:
-                    print(f"  Error parsing best NDCG: {line}")
-                    print(f"  Error: {e}")
+            # Evaluate
+            if (epoch + 1) % self.config['eval_freq'] == 0:
+                model.eval()
+                with torch.no_grad():
+                    results = Test(self.dataset, model, epoch)
+                    ndcg = results['ndcg'][0]
+                    recall = results['recall'][0]
+                    precision = results['precision'][0]
+                    
+                    if ndcg > best_ndcg:
+                        best_ndcg = ndcg
+                        best_recall = recall
+                        best_precision = precision
+                    
+                    if (epoch + 1) % 20 == 0:
+                        print(f"    Test NDCG@20: {ndcg:.4f} | Recall@20: {recall:.4f} | Precision@20: {precision:.4f}")
+        
+        elapsed = time.time() - start_time
         
         return {
             'u_init': u_init,
@@ -107,38 +144,14 @@ def run_experiment(dataset, u_init, i_init, b_init, base_args):
             'ndcg': best_ndcg,
             'recall': best_recall,
             'precision': best_precision,
-            'status': 'success',
-            'error': None
-        }
-        
-    except subprocess.TimeoutExpired:
-        return {
-            'u_init': u_init,
-            'i_init': i_init,
-            'b_init': b_init,
-            'ndcg': 0.0,
-            'recall': 0.0,
-            'precision': 0.0,
-            'status': 'timeout',
-            'error': 'Timeout after 30 minutes'
-        }
-    except Exception as e:
-        return {
-            'u_init': u_init,
-            'i_init': i_init,
-            'b_init': b_init,
-            'ndcg': 0.0,
-            'recall': 0.0,
-            'precision': 0.0,
-            'status': 'error',
-            'error': str(e)
+            'time': elapsed
         }
 
 
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Search init patterns")
+    parser = argparse.ArgumentParser(description="Efficient Init Pattern Search")
     parser.add_argument('--dataset', type=str, default='yelp2018',
                        choices=['ml-100k', 'lastfm', 'yelp2018', 'gowalla', 'amazon-book'])
     parser.add_argument('--quick', action='store_true',
@@ -153,25 +166,55 @@ if __name__ == "__main__":
     parser.add_argument('--item_lr', type=float, default=0.05, help='item learning rate')
     parser.add_argument('--bipartite_lr', type=float, default=0.05, help='bipartite learning rate')
     parser.add_argument('--eval_freq', type=int, default=10, help='evaluation frequency')
+    parser.add_argument('--filter_type', type=str, default='spectral_basis')
+    parser.add_argument('--filter', type=str, default='uib')
+    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'bpr'])
+    parser.add_argument('--use_two_hop', action='store_true')
     
     args = parser.parse_args()
     
-    # Define base arguments for your experiment (using command line args)
-    base_args = {
-        '--full_training': '',
-        '--u': str(args.u),
-        '--i': str(args.i), 
-        '--b': str(args.b),
-        '--filter_type': 'spectral_basis',
-        '--filter': 'uib',
-        '--loss': 'mse',
-        '--use_two_hop': '',
-        '--epochs': str(args.epochs),
-        '--user_lr': str(args.user_lr),
-        '--item_lr': str(args.item_lr),
-        '--bipartite_lr': str(args.bipartite_lr),
-        '--eval_freq': str(args.eval_freq)
+    # Create config
+    config = {
+        'dataset': args.dataset,
+        'full_training': True,
+        'filter': args.filter,
+        'filter_type': args.filter_type,
+        'filter_order': 8,
+        'u_n_eigen': args.u,
+        'i_n_eigen': args.i,
+        'b_n_eigen': args.b,
+        'user_lr': args.user_lr,
+        'item_lr': args.item_lr,
+        'bipartite_lr': args.bipartite_lr,
+        'user_decay': 1e-3,
+        'item_decay': 1e-3,
+        'bipartite_decay': 1e-3,
+        'epochs': args.epochs,
+        'train_batch_size': 1000,
+        'test_batch_size': 500,
+        'neg_ratio': 4,
+        'loss': args.loss,
+        'optimizer': 'adam',
+        'scheduler': 'none',
+        'patience': 10,
+        'topks': [20],
+        'eval_freq': args.eval_freq,
+        'seed': 2020,
+        'device': torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+        'verbose': 1,
+        'exp_name': 'init_search',
+        'save_model': False,
+        'log_filters': False,
+        'use_two_hop': args.use_two_hop,
+        'two_hop_weight': 1.3,
+        'raw_only': False
     }
+    
+    # Set random seed
+    np.random.seed(config['seed'])
+    torch.manual_seed(config['seed'])
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(config['seed'])
     
     # All available init patterns
     all_patterns = ['original', 'smooth', 'sharp', 'lowpass', 'uniform', 'lowfreq',
@@ -184,51 +227,47 @@ if __name__ == "__main__":
     else:
         patterns = all_patterns
     
-    print(f"🔍 Init Pattern Search for {args.dataset}")
-    print(f"Testing {len(patterns)} patterns per view")
-    print(f"Total combinations: {len(patterns)**3}")
-    print(f"Base config: {json.dumps(base_args, indent=2)}")
+    print(f"🔍 Efficient Init Pattern Search")
+    print(f"Dataset: {args.dataset}")
+    print(f"Testing {len(patterns)} patterns per view = {len(patterns)**3} total combinations")
+    print(f"Model: {args.filter} views, {args.filter_type} filters")
+    print(f"Eigenvalues: u={args.u}, i={args.i}, b={args.b}")
+    print(f"Training: {args.epochs} epochs, lr={args.user_lr}/{args.item_lr}/{args.bipartite_lr}")
     
-    # Generate all combinations
-    combinations = list(itertools.product(patterns, patterns, patterns))
-    
-    # Run experiments
-    results = []
+    # Create searcher (loads data and computes eigendecomposition once)
     start_time = time.time()
+    searcher = InitPatternSearcher(args.dataset, config)
+    print(f"✅ Setup completed in {time.time() - start_time:.1f}s")
+    
+    # Test all combinations
+    results = []
     best_ndcg = 0.0
     best_config = None
     
+    combinations = list(itertools.product(patterns, patterns, patterns))
+    
     for i, (u_init, i_init, b_init) in enumerate(combinations):
-        print(f"\n[{i+1}/{len(combinations)}] Testing combination...")
-        result = run_experiment(args.dataset, u_init, i_init, b_init, base_args)
+        print(f"\n[{i+1}/{len(combinations)}] Testing: u={u_init}, i={i_init}, b={b_init}")
+        
+        result = searcher.evaluate_init_pattern(u_init, i_init, b_init)
         results.append(result)
         
-        # Update best if needed
-        if result['status'] == 'success' and result['ndcg'] > best_ndcg:
+        # Track best
+        if result['ndcg'] > best_ndcg:
             best_ndcg = result['ndcg']
             best_config = (u_init, i_init, b_init)
         
-        # Print current result and comparison to best
-        if result['status'] == 'success' and result['ndcg'] > 0:
-            print(f"  Current: NDCG={result['ndcg']:.4f} (u={u_init}, i={i_init}, b={b_init})")
+        # Show comparison
+        print(f"  Result: NDCG={result['ndcg']:.4f} (time={result['time']:.1f}s)")
+        if best_config and result['ndcg'] < best_ndcg:
             print(f"  Best so far: NDCG={best_ndcg:.4f} (u={best_config[0]}, i={best_config[1]}, b={best_config[2]})")
-            print(f"  Difference: {result['ndcg'] - best_ndcg:.4f}")
-            
-            # Show current top 3
-            df_temp = pd.DataFrame(results)
-            df_temp = df_temp[df_temp['status'] == 'success']
-            if len(df_temp) > 0:
-                df_sorted = df_temp.sort_values('ndcg', ascending=False)
-                print("\n  Current Top 3:")
-                for rank, (idx, row) in enumerate(df_sorted.head(3).iterrows(), 1):
-                    print(f"    {rank}. {row['u_init']}-{row['i_init']}-{row['b_init']}: {row['ndcg']:.4f}")
     
-    elapsed = time.time() - start_time
-    print(f"\n⏱️  Search completed in {elapsed/60:.1f} minutes")
+    # Save and analyze results
+    total_time = sum(r['time'] for r in results)
+    print(f"\n⏱️  Total search time: {total_time/60:.1f} minutes")
     
-    # Convert to DataFrame and analyze
+    # Convert to DataFrame
     df = pd.DataFrame(results)
-    df_success = df[df['status'] == 'success']
     
     # Save results
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -236,58 +275,48 @@ if __name__ == "__main__":
     df.to_csv(output_file, index=False)
     print(f"\n💾 Results saved to: {output_file}")
     
-    # Print statistics
-    print(f"\n📊 Statistics:")
-    print(f"  Successful runs: {len(df_success)}/{len(df)}")
-    print(f"  Failed runs: {len(df) - len(df_success)}")
+    # Sort by NDCG
+    df_sorted = df.sort_values('ndcg', ascending=False)
     
-    if len(df_success) > 0:
-        # Sort by NDCG
-        df_sorted = df_success.sort_values('ndcg', ascending=False)
+    # Print top 10
+    print(f"\n🏆 Top 10 Init Pattern Combinations:")
+    print(f"{'Rank':<5} {'User':<12} {'Item':<12} {'Bipartite':<12} {'NDCG@20':<8} {'Time(s)':<8}")
+    print("-" * 65)
+    
+    for idx, row in df_sorted.head(10).iterrows():
+        rank = idx + 1
+        print(f"{rank:<5} {row['u_init']:<12} {row['i_init']:<12} {row['b_init']:<12} "
+              f"{row['ndcg']:<8.4f} {row['time']:<8.1f}")
+    
+    # Analyze by view
+    print("\n📈 Best Patterns by View:")
+    
+    for view_name, col_name in [('User', 'u_init'), ('Item', 'i_init'), ('Bipartite', 'b_init')]:
+        view_stats = df.groupby(col_name)['ndcg'].agg(['mean', 'std', 'count', 'max'])
+        view_stats = view_stats.sort_values('mean', ascending=False)
         
-        # Print top 10
-        print(f"\n🏆 Top 10 Init Pattern Combinations:")
-        print(f"{'Rank':<5} {'User':<12} {'Item':<12} {'Bipartite':<12} {'NDCG@20':<8} {'Recall@20':<10}")
-        print("-" * 70)
-        
-        for idx, row in df_sorted.head(10).iterrows():
-            rank = len(df_sorted) - df_sorted.index.get_loc(idx)
-            print(f"{rank:<5} {row['u_init']:<12} {row['i_init']:<12} {row['b_init']:<12} "
-                  f"{row['ndcg']:<8.4f} {row['recall']:<10.4f}")
-        
-        # Analyze patterns by view
-        print("\n📈 Best Patterns by View:")
-        
-        # User view analysis
-        u_avg = df_success.groupby('u_init')['ndcg'].agg(['mean', 'std', 'count'])
-        u_avg = u_avg.sort_values('mean', ascending=False)
-        print("\n  User View:")
-        for pattern, stats in u_avg.head(5).iterrows():
-            print(f"    {pattern:<12}: {stats['mean']:.4f} ± {stats['std']:.4f} (n={int(stats['count'])})")
-        
-        # Item view analysis
-        i_avg = df_success.groupby('i_init')['ndcg'].agg(['mean', 'std', 'count'])
-        i_avg = i_avg.sort_values('mean', ascending=False)
-        print("\n  Item View:")
-        for pattern, stats in i_avg.head(5).iterrows():
-            print(f"    {pattern:<12}: {stats['mean']:.4f} ± {stats['std']:.4f} (n={int(stats['count'])})")
-        
-        # Bipartite view analysis
-        b_avg = df_success.groupby('b_init')['ndcg'].agg(['mean', 'std', 'count'])
-        b_avg = b_avg.sort_values('mean', ascending=False)
-        print("\n  Bipartite View:")
-        for pattern, stats in b_avg.head(5).iterrows():
-            print(f"    {pattern:<12}: {stats['mean']:.4f} ± {stats['std']:.4f} (n={int(stats['count'])})")
-        
-        # Best configuration
-        best = df_sorted.iloc[0]
-        print(f"\n🎉 Best Configuration:")
-        print(f"   Init patterns: u={best['u_init']}, i={best['i_init']}, b={best['b_init']}")
-        print(f"   NDCG@20: {best['ndcg']:.4f}")
-        print(f"   Recall@20: {best['recall']:.4f}")
-        print(f"   Precision@20: {best['precision']:.4f}")
-        
-        # Print command to reproduce
-        print(f"\n🚀 Command to reproduce best result:")
-        print(f"python main.py --dataset {args.dataset} {' '.join(f'{k} {v}' if v else k for k, v in base_args.items())} "
-              f"--user_init {best['u_init']} --item_init {best['i_init']} --bipartite_init {best['b_init']}")
+        print(f"\n  {view_name} View:")
+        for pattern, stats in view_stats.head(5).iterrows():
+            print(f"    {pattern:<12}: mean={stats['mean']:.4f} ± {stats['std']:.4f} "
+                  f"(max={stats['max']:.4f}, n={int(stats['count'])})")
+    
+    # Best configuration
+    best = df_sorted.iloc[0]
+    print(f"\n🎉 Best Configuration:")
+    print(f"   Init patterns: u={best['u_init']}, i={best['i_init']}, b={best['b_init']}")
+    print(f"   NDCG@20: {best['ndcg']:.4f}")
+    print(f"   Recall@20: {best['recall']:.4f}")
+    print(f"   Precision@20: {best['precision']:.4f}")
+    print(f"   Training time: {best['time']:.1f}s")
+    
+    # Command to reproduce
+    print(f"\n🚀 Command to reproduce best result:")
+    print(f"python main.py --dataset {args.dataset} --full_training "
+          f"--filter {args.filter} --filter_type {args.filter_type} --loss {args.loss} "
+          f"--u {args.u} --i {args.i} --b {args.b} "
+          f"--user_init {best['u_init']} --item_init {best['i_init']} --bipartite_init {best['b_init']} "
+          f"--user_lr {args.user_lr} --item_lr {args.item_lr} --bipartite_lr {args.bipartite_lr} "
+          f"--epochs {args.epochs}", end='')
+    if args.use_two_hop:
+        print(" --use_two_hop", end='')
+    print()
