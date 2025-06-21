@@ -43,20 +43,57 @@ def run_experiment(dataset, u_init, i_init, b_init, base_args):
         best_ndcg = 0.0
         best_recall = 0.0
         best_precision = 0.0
+        current_ndcg = 0.0
         
-        for line in result.stdout.split('\n'):
-            if 'Best @' in line and 'NDCG' in line:
-                # Extract NDCG value
-                parts = line.split('NDCG:')[-1].strip()
-                best_ndcg = float(parts.split()[0])
-            elif 'Recall:' in line and best_ndcg > 0:
-                # Get recall from same line
-                parts = line.split('Recall:')[-1].strip()
-                best_recall = float(parts.split()[0])
-            elif 'Precision:' in line and best_ndcg > 0:
-                # Get precision from same line
-                parts = line.split('Precision:')[-1].strip()
-                best_precision = float(parts.split()[0])
+        # Debug: print first few lines of output
+        output_lines = result.stdout.split('\n')
+        if len(output_lines) < 100:  # If output is suspiciously short
+            print(f"  WARNING: Short output ({len(output_lines)} lines)")
+            print(f"  stderr: {result.stderr[:500]}")  # Print first 500 chars of stderr
+        
+        for line in output_lines:
+            # Parse epoch results (Test/Validation NDCG@20: X.XXXX | Recall@20: X.XXXX | Precision@20: X.XXXX)
+            if ('Test NDCG@20:' in line or 'Validation NDCG@20:' in line) and '|' in line:
+                try:
+                    # Extract all metrics from the same line
+                    if 'Test NDCG@20:' in line:
+                        ndcg_part = line.split('Test NDCG@20:')[1].split('|')[0].strip()
+                    else:
+                        ndcg_part = line.split('Validation NDCG@20:')[1].split('|')[0].strip()
+                    current_ndcg = float(ndcg_part)
+                    
+                    if 'Recall@20:' in line:
+                        recall_part = line.split('Recall@20:')[1].split('|')[0].strip()
+                        current_recall = float(recall_part)
+                    else:
+                        current_recall = 0.0
+                        
+                    if 'Precision@20:' in line:
+                        precision_part = line.split('Precision@20:')[1].strip()
+                        current_precision = float(precision_part.split()[0])
+                    else:
+                        current_precision = 0.0
+                    
+                    # Update best metrics if this is better
+                    if current_ndcg > best_ndcg:
+                        best_ndcg = current_ndcg
+                        best_recall = current_recall
+                        best_precision = current_precision
+                except Exception as e:
+                    print(f"  Error parsing line: {line}")
+                    print(f"  Error: {e}")
+            
+            # Also check for final best NDCG
+            elif 'Best NDCG@20:' in line:
+                try:
+                    parts = line.split('Best NDCG@20:')[1].strip()
+                    final_best = float(parts.split()[0])
+                    # Only update if we haven't found metrics yet
+                    if best_ndcg == 0.0:
+                        best_ndcg = final_best
+                except Exception as e:
+                    print(f"  Error parsing best NDCG: {line}")
+                    print(f"  Error: {e}")
         
         return {
             'u_init': u_init,
@@ -98,7 +135,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Search init patterns")
     parser.add_argument('--dataset', type=str, default='yelp2018',
-                       choices=['ml-100k', 'yelp2018', 'gowalla', 'amazon-book'])
+                       choices=['ml-100k', 'lastfm', 'yelp2018', 'gowalla', 'amazon-book'])
     parser.add_argument('--quick', action='store_true',
                        help='Quick search with fewer patterns')
     
@@ -152,15 +189,24 @@ if __name__ == "__main__":
     # Run experiments
     results = []
     start_time = time.time()
+    best_ndcg = 0.0
+    best_config = None
     
     for i, (u_init, i_init, b_init) in enumerate(combinations):
         print(f"\n[{i+1}/{len(combinations)}] Testing combination...")
         result = run_experiment(args.dataset, u_init, i_init, b_init, base_args)
         results.append(result)
         
-        # Print current best
+        # Update best if needed
+        if result['status'] == 'success' and result['ndcg'] > best_ndcg:
+            best_ndcg = result['ndcg']
+            best_config = (u_init, i_init, b_init)
+        
+        # Print current result and comparison to best
         if result['status'] == 'success' and result['ndcg'] > 0:
-            print(f"  Result: NDCG={result['ndcg']:.4f}")
+            print(f"  Current: NDCG={result['ndcg']:.4f} (u={u_init}, i={i_init}, b={b_init})")
+            print(f"  Best so far: NDCG={best_ndcg:.4f} (u={best_config[0]}, i={best_config[1]}, b={best_config[2]})")
+            print(f"  Difference: {result['ndcg'] - best_ndcg:.4f}")
             
             # Show current top 3
             df_temp = pd.DataFrame(results)
@@ -168,8 +214,8 @@ if __name__ == "__main__":
             if len(df_temp) > 0:
                 df_sorted = df_temp.sort_values('ndcg', ascending=False)
                 print("\n  Current Top 3:")
-                for idx, row in df_sorted.head(3).iterrows():
-                    print(f"    {row['u_init']}-{row['i_init']}-{row['b_init']}: {row['ndcg']:.4f}")
+                for rank, (idx, row) in enumerate(df_sorted.head(3).iterrows(), 1):
+                    print(f"    {rank}. {row['u_init']}-{row['i_init']}-{row['b_init']}: {row['ndcg']:.4f}")
     
     elapsed = time.time() - start_time
     print(f"\n⏱️  Search completed in {elapsed/60:.1f} minutes")
