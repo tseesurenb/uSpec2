@@ -7,21 +7,29 @@ Only changes filter initialization between experiments
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, message="Can't initialize NVML")
 
+import sys
+import os
+
+# Temporarily override sys.argv to prevent config.py from parsing our args
+original_argv = sys.argv
+sys.argv = [sys.argv[0]]  # Keep only script name
+
 import torch
 import torch.nn as nn
 import numpy as np
 import time
 import pandas as pd
 from datetime import datetime
-import os
 import copy
 
 # Import from current directory
-from config import get_config
 from learnable_model import SpectralCFLearnable
 from dataloader import Loader
 from main import get_optimizer, Test, MSE_train_learnable, BPR_train_learnable
 import utils
+
+# Restore original sys.argv
+sys.argv = original_argv
 
 
 class InitPatternSearcher:
@@ -151,14 +159,14 @@ def main():
     
     parser = argparse.ArgumentParser(description="Efficient Init Pattern Search")
     parser.add_argument('--dataset', type=str, default='yelp2018',
-                       choices=['ml-100k', 'lastfm', 'yelp2018', 'gowalla', 'amazon-book'])
+                       choices=['ml-100k', 'lastfm', 'gowalla', 'amazon-book'])
     parser.add_argument('--quick', action='store_true',
                        help='Quick search with fewer patterns')
     
     # Model parameters
-    parser.add_argument('--u', type=int, default=160, help='user eigenvalues')
-    parser.add_argument('--i', type=int, default=500, help='item eigenvalues')
-    parser.add_argument('--b', type=int, default=600, help='bipartite eigenvalues')
+    parser.add_argument('--u_eigen', type=int, default=160, help='user eigenvalues')
+    parser.add_argument('--i_eigen', type=int, default=500, help='item eigenvalues')
+    parser.add_argument('--b_eigen', type=int, default=600, help='bipartite eigenvalues')
     parser.add_argument('--filter_type', type=str, default='spectral_basis')
     parser.add_argument('--filter', type=str, default='uib')
     parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'bpr'])
@@ -181,9 +189,9 @@ def main():
         'filter': args.filter,
         'filter_type': args.filter_type,
         'filter_order': 8,
-        'u_n_eigen': args.u,
-        'i_n_eigen': args.i,
-        'b_n_eigen': args.b,
+        'u_n_eigen': args.u_eigen,
+        'i_n_eigen': args.i_eigen,
+        'b_n_eigen': args.b_eigen,
         'user_lr': args.user_lr,
         'item_lr': args.item_lr,
         'bipartite_lr': args.bipartite_lr,
@@ -232,7 +240,7 @@ def main():
     print(f"Dataset: {args.dataset}")
     print(f"Testing {len(patterns)} patterns per view = {len(patterns)**3} total combinations")
     print(f"Model: {args.filter} views, {args.filter_type} filters")
-    print(f"Eigenvalues: u={args.u}, i={args.i}, b={args.b}")
+    print(f"Eigenvalues: u={args.u_eigen}, i={args.i_eigen}, b={args.b_eigen}")
     print(f"Training: {args.epochs} epochs, lr={args.user_lr}/{args.item_lr}/{args.bipartite_lr}")
     
     # Create searcher (loads data and computes eigendecomposition once)
@@ -316,7 +324,7 @@ def main():
     print(f"\n🚀 Command to reproduce best result:")
     print(f"python main.py --dataset {args.dataset} --full_training "
           f"--filter {args.filter} --filter_type {args.filter_type} --loss {args.loss} "
-          f"--u {args.u} --i {args.i} --b {args.b} "
+          f"--u {args.u_eigen} --i {args.i_eigen} --b {args.b_eigen} "
           f"--user_init {best['u_init']} --item_init {best['i_init']} --bipartite_init {best['b_init']} "
           f"--user_lr {args.user_lr} --item_lr {args.item_lr} --bipartite_lr {args.bipartite_lr} "
           f"--epochs {args.epochs}", end='')
