@@ -41,19 +41,19 @@ def parse_args():
                        help='bipartite filter initialization')
     
     # View-specific learning rates
-    parser.add_argument('--user_lr', type=float, default=0.1,
+    parser.add_argument('--user_lr', type=float, default=0.05,
                        help='learning rate for user filter')
-    parser.add_argument('--item_lr', type=float, default=0.01,
+    parser.add_argument('--item_lr', type=float, default=0.05,
                        help='learning rate for item filter')
     parser.add_argument('--bipartite_lr', type=float, default=0.05,
                        help='learning rate for bipartite filter')
     
     # View-specific weight decay
-    parser.add_argument('--user_decay', type=float, default=1e-4,
+    parser.add_argument('--user_decay', type=float, default=1e-3,
                        help='weight decay for user filter')
     parser.add_argument('--item_decay', type=float, default=1e-3,
                        help='weight decay for item filter')
-    parser.add_argument('--bipartite_decay', type=float, default=5e-4,
+    parser.add_argument('--bipartite_decay', type=float, default=1e-3,
                        help='weight decay for bipartite filter')
     
     # Global training settings
