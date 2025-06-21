@@ -33,15 +33,15 @@ def parse_args():
     
     # Filter designs (same as static model)
     filter_choices = ['orig', 'cheby', 'jacobi', 'legendre', 'laguerre', 'hermite', 'bernstein', 'multi', 'band', 'ensemble', 'golden', 'harmonic', 'spectral_basis', 'enhanced_basis']
-    parser.add_argument('--uf', type=str, default='orig', choices=filter_choices, help='user filter')
-    parser.add_argument('--if_', type=str, default='orig', choices=filter_choices, help='item filter') 
-    parser.add_argument('--bf', type=str, default='orig', choices=filter_choices, help='bipartite filter')
+    parser.add_argument('--uf', type=str, default='spectral_basis', choices=filter_choices, help='user filter')
+    parser.add_argument('--if_', type=str, default='spectral_basis', choices=filter_choices, help='item filter') 
+    parser.add_argument('--bf', type=str, default='spectral_basis', choices=filter_choices, help='bipartite filter')
     
     # Filter initializations (same as static model)
     init_choices = ['smooth', 'sharp', 'bandpass', 'golden', 'butter', 'gauss', 'stop', 'notch']
     parser.add_argument('--up', type=str, default='smooth', choices=init_choices, help='user pattern')
-    parser.add_argument('--ip', type=str, default='sharp', choices=init_choices, help='item pattern')
-    parser.add_argument('--bp', type=str, default='smooth', choices=init_choices, help='bipartite pattern')
+    parser.add_argument('--ip', type=str, default='step_0.7', choices=init_choices, help='item pattern')
+    parser.add_argument('--bp', type=str, default='step_0.7', choices=init_choices, help='bipartite pattern')
     
     # Training control
     parser.add_argument('--patience', type=int, default=5, help='early stopping patience')
