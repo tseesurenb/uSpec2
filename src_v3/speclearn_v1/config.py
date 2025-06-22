@@ -35,9 +35,9 @@ def parse_args():
                    'exp_decay', 'constant_1', 'constant_0.1']
     parser.add_argument('--user_init', type=str, default='smooth', choices=init_choices,
                        help='user filter initialization')
-    parser.add_argument('--item_init', type=str, default='step_0.7', choices=init_choices,
+    parser.add_argument('--item_init', type=str, default='lowpass', choices=init_choices,
                        help='item filter initialization')
-    parser.add_argument('--bipartite_init', type=str, default='step_0.7', choices=init_choices,
+    parser.add_argument('--bipartite_init', type=str, default='linear_dec', choices=init_choices,
                        help='bipartite filter initialization')
     
     # View-specific learning rates
