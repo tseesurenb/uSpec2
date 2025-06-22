@@ -127,12 +127,8 @@ class InitPatternSearcher:
             model.train()
             if self.config['loss'] == 'mse':
                 mse_loss = MSE_train_learnable(self.dataset, model, optimizer)
-                if epoch % 20 == 0:
-                    print(f"    Epoch {epoch+1}: MSE Loss = {mse_loss:.4f}")
             else:
                 bpr_loss = BPR_train_learnable(self.dataset, model, optimizer)
-                if epoch % 20 == 0:
-                    print(f"    Epoch {epoch+1}: BPR Loss = {bpr_loss:.4f}")
             
             # Evaluate
             if (epoch + 1) % self.config['eval_freq'] == 0:
@@ -147,9 +143,6 @@ class InitPatternSearcher:
                         best_ndcg = ndcg
                         best_recall = recall
                         best_precision = precision
-                    
-                    if (epoch + 1) % 20 == 0:
-                        print(f"    Test NDCG@20: {ndcg:.4f} | Recall@20: {recall:.4f} | Precision@20: {precision:.4f}")
         
         elapsed = time.time() - start_time
         
@@ -173,19 +166,20 @@ if __name__ == "__main__":
     parser.add_argument('--quick', action='store_true',
                        help='Quick search with fewer patterns')
     
-    # Allow overriding base parameters
-    parser.add_argument('--u', type=int, default=160, help='user eigenvalues')
-    parser.add_argument('--i', type=int, default=500, help='item eigenvalues')
-    parser.add_argument('--b', type=int, default=600, help='bipartite eigenvalues')
-    parser.add_argument('--epochs', type=int, default=100, help='training epochs')
+    # Allow overriding base parameters - using your best config
+    parser.add_argument('--u', type=int, default=135, help='user eigenvalues')
+    parser.add_argument('--i', type=int, default=300, help='item eigenvalues')
+    parser.add_argument('--b', type=int, default=400, help='bipartite eigenvalues')
+    parser.add_argument('--epochs', type=int, default=20, help='training epochs for search')
     parser.add_argument('--user_lr', type=float, default=0.05, help='user learning rate')
     parser.add_argument('--item_lr', type=float, default=0.05, help='item learning rate')
     parser.add_argument('--bipartite_lr', type=float, default=0.05, help='bipartite learning rate')
-    parser.add_argument('--eval_freq', type=int, default=10, help='evaluation frequency')
+    parser.add_argument('--eval_freq', type=int, default=5, help='evaluation frequency')
     parser.add_argument('--filter_type', type=str, default='spectral_basis')
     parser.add_argument('--filter', type=str, default='uib')
     parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'bpr'])
-    parser.add_argument('--use_two_hop', action='store_true')
+    parser.add_argument('--use_two_hop', action='store_true',
+                       help='enable two-hop propagation')
     
     args = parser.parse_args()
     
@@ -249,6 +243,7 @@ if __name__ == "__main__":
     print(f"Model: {args.filter} views, {args.filter_type} filters")
     print(f"Eigenvalues: u={args.u}, i={args.i}, b={args.b}")
     print(f"Training: {args.epochs} epochs, lr={args.user_lr}/{args.item_lr}/{args.bipartite_lr}")
+    print(f"Two-hop: {'enabled' if args.use_two_hop else 'disabled'}")
     
     # Create searcher (loads data and computes eigendecomposition once)
     start_time = time.time()
