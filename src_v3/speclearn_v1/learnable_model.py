@@ -93,6 +93,13 @@ class SpectralCFLearnable(nn.Module):
         self.beta_item = config.get('beta_item', 0.0)
         self.beta_bipartite = config.get('beta_bipartite', 0.0)
         
+        # Ideal pass filter parameters
+        self.use_ideal_pass = config.get('use_ideal_pass', False)
+        self.ideal_pass_alpha = nn.Parameter(torch.tensor(config.get('ideal_pass_alpha', 0.3)))
+        self.ideal_pass_eta_user = config.get('ideal_pass_eta_user', 0)
+        self.ideal_pass_eta_item = config.get('ideal_pass_eta_item', 0)
+        self.ideal_pass_eta_bipartite = config.get('ideal_pass_eta_bipartite', 0)
+        
         # Removed learnable gamma - use standard GF-CF normalization (gamma=0.5)
         
         # Compute and store degree matrices for normalization
@@ -108,6 +115,14 @@ class SpectralCFLearnable(nn.Module):
         print(f"Eigenvalues: u={self.u_n_eigen}, i={self.i_n_eigen}, b={self.b_n_eigen}")
         if self.beta_user > 0 or self.beta_item > 0 or self.beta_bipartite > 0:
             print(f"Degree normalization: β_user={self.beta_user}, β_item={self.beta_item}, β_bipartite={self.beta_bipartite}")
+        if self.use_ideal_pass:
+            print(f"Ideal pass filter enabled: α={self.ideal_pass_alpha.item():.3f}")
+            if self.ideal_pass_eta_user > 0:
+                print(f"  User cutoff: {self.ideal_pass_eta_user}")
+            if self.ideal_pass_eta_item > 0:
+                print(f"  Item cutoff: {self.ideal_pass_eta_item}")
+            if self.ideal_pass_eta_bipartite > 0:
+                print(f"  Bipartite cutoff: {self.ideal_pass_eta_bipartite}")
         
         # Compute eigendecompositions (skip if raw_only mode)
         if not self.raw_only:
@@ -351,6 +366,23 @@ class SpectralCFLearnable(nn.Module):
                 batch_user_vecs = self.user_eigenvecs[users]  # (batch, n_eigen)
                 user_filtered = batch_user_vecs @ torch.diag(filter_response) @ batch_user_vecs.T @ user_profiles
             
+            # Add ideal pass filter if enabled
+            if self.use_ideal_pass and self.ideal_pass_eta_user > 0:
+                eta = min(self.ideal_pass_eta_user, len(self.user_eigenvals))
+                ideal_response = torch.zeros_like(self.user_eigenvals)
+                ideal_response[:eta] = 1.0
+                
+                # Apply the same degree normalization as the main filter
+                if self.beta_user > 0:
+                    batch_user_vecs = self.user_eigenvecs[users]
+                    ideal_filtered = batch_user_vecs @ torch.diag(ideal_response) @ batch_user_vecs.T @ normalized_profiles
+                    ideal_filtered = ideal_filtered * batch_user_degrees
+                else:
+                    batch_user_vecs = self.user_eigenvecs[users]
+                    ideal_filtered = batch_user_vecs @ torch.diag(ideal_response) @ batch_user_vecs.T @ user_profiles
+                
+                user_filtered = user_filtered + self.ideal_pass_alpha * ideal_filtered
+            
             scores.append(user_filtered)
         
         # Item view filtering
@@ -370,6 +402,21 @@ class SpectralCFLearnable(nn.Module):
             else:
                 # Standard item filtering without degree normalization
                 item_filtered = user_profiles @ self.item_eigenvecs @ torch.diag(filter_response) @ self.item_eigenvecs.T
+            
+            # Add ideal pass filter if enabled
+            if self.use_ideal_pass and self.ideal_pass_eta_item > 0:
+                eta = min(self.ideal_pass_eta_item, len(self.item_eigenvals))
+                ideal_response = torch.zeros_like(self.item_eigenvals)
+                ideal_response[:eta] = 1.0
+                
+                # Apply the same degree normalization as the main filter
+                if self.beta_item > 0:
+                    ideal_filtered = normalized_profiles @ self.item_eigenvecs @ torch.diag(ideal_response) @ self.item_eigenvecs.T
+                    ideal_filtered = ideal_filtered * self.item_degrees_pow.unsqueeze(0)
+                else:
+                    ideal_filtered = user_profiles @ self.item_eigenvecs @ torch.diag(ideal_response) @ self.item_eigenvecs.T
+                
+                item_filtered = item_filtered + self.ideal_pass_alpha * ideal_filtered
             
             scores.append(item_filtered)
         
@@ -394,6 +441,23 @@ class SpectralCFLearnable(nn.Module):
                 # Standard bipartite filtering without degree normalization
                 batch_bipartite_vecs = self.bipartite_eigenvecs[users]  # (batch, n_eigen)
                 bipartite_filtered = batch_bipartite_vecs @ torch.diag(filter_response) @ batch_bipartite_vecs.T @ user_profiles
+            
+            # Add ideal pass filter if enabled
+            if self.use_ideal_pass and self.ideal_pass_eta_bipartite > 0:
+                eta = min(self.ideal_pass_eta_bipartite, len(self.bipartite_eigenvals))
+                ideal_response = torch.zeros_like(self.bipartite_eigenvals)
+                ideal_response[:eta] = 1.0
+                
+                # Apply the same degree normalization as the main filter
+                if self.beta_bipartite > 0:
+                    batch_bipartite_vecs = self.bipartite_eigenvecs[users]
+                    ideal_filtered = batch_bipartite_vecs @ torch.diag(ideal_response) @ batch_bipartite_vecs.T @ normalized_profiles
+                    ideal_filtered = ideal_filtered * batch_bipartite_degrees
+                else:
+                    batch_bipartite_vecs = self.bipartite_eigenvecs[users]
+                    ideal_filtered = batch_bipartite_vecs @ torch.diag(ideal_response) @ batch_bipartite_vecs.T @ user_profiles
+                
+                bipartite_filtered = bipartite_filtered + self.ideal_pass_alpha * ideal_filtered
             
             scores.append(bipartite_filtered)
         
@@ -455,6 +519,15 @@ class SpectralCFLearnable(nn.Module):
                 'lr': 0.01,  # Use a moderate learning rate for the weight
                 'weight_decay': 0,
                 'name': 'two_hop_weight'
+            })
+        
+        # Add ideal pass alpha if enabled
+        if self.use_ideal_pass:
+            groups.append({
+                'params': [self.ideal_pass_alpha],
+                'lr': 0.01,  # Use a moderate learning rate for the weight
+                'weight_decay': 0,
+                'name': 'ideal_pass_alpha'
             })
         
         return groups

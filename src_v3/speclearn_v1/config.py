@@ -110,6 +110,18 @@ def parse_args():
     parser.add_argument('--beta_bipartite', type=float, default=0.0,
                        help='degree-based normalization for bipartite view (0.0-0.5)')
     
+    # Ideal pass filter parameters
+    parser.add_argument('--use_ideal_pass', action='store_true',
+                       help='enable ideal pass filter (sharp frequency cutoff)')
+    parser.add_argument('--ideal_pass_alpha', type=float, default=0.3,
+                       help='weight for ideal pass filter combination (0.0-1.0)')
+    parser.add_argument('--ideal_pass_eta_user', type=int, default=0,
+                       help='cutoff frequency for user ideal pass filter (0=use all eigenvalues)')
+    parser.add_argument('--ideal_pass_eta_item', type=int, default=0,
+                       help='cutoff frequency for item ideal pass filter (0=use all eigenvalues)')
+    parser.add_argument('--ideal_pass_eta_bipartite', type=int, default=0,
+                       help='cutoff frequency for bipartite ideal pass filter (0=use all eigenvalues)')
+    
     # Removed learnable gamma - using standard GF-CF normalization
     
     return parser.parse_args()
@@ -186,6 +198,13 @@ def get_config(args):
         'beta_user': args.beta_user,
         'beta_item': args.beta_item,
         'beta_bipartite': args.beta_bipartite,
+        
+        # Ideal pass filter
+        'use_ideal_pass': args.use_ideal_pass,
+        'ideal_pass_alpha': args.ideal_pass_alpha,
+        'ideal_pass_eta_user': args.ideal_pass_eta_user,
+        'ideal_pass_eta_item': args.ideal_pass_eta_item,
+        'ideal_pass_eta_bipartite': args.ideal_pass_eta_bipartite,
         
         # Removed learnable normalization
     }
