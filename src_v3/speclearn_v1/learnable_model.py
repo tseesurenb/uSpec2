@@ -88,7 +88,15 @@ class SpectralCFLearnable(nn.Module):
         self.raw_only = config.get('raw_only', False)  # New: raw propagation only mode
         self.two_hop_weight = nn.Parameter(torch.tensor(config.get('two_hop_weight', 0.3)))
         
+        # Degree-based normalization parameters
+        self.beta_user = config.get('beta_user', 0.0)
+        self.beta_item = config.get('beta_item', 0.0)
+        self.beta_bipartite = config.get('beta_bipartite', 0.0)
+        
         # Removed learnable gamma - use standard GF-CF normalization (gamma=0.5)
+        
+        # Compute and store degree matrices for normalization
+        self._setup_degree_matrices()
         
         # Precompute normalized adjacency for two-hop if needed
         if self.use_two_hop or self.raw_only:
@@ -98,12 +106,42 @@ class SpectralCFLearnable(nn.Module):
         print(f"Active views: {self.filter_views}")
         print(f"Filter type: {filter_type}, order: {filter_order}")
         print(f"Eigenvalues: u={self.u_n_eigen}, i={self.i_n_eigen}, b={self.b_n_eigen}")
+        if self.beta_user > 0 or self.beta_item > 0 or self.beta_bipartite > 0:
+            print(f"Degree normalization: β_user={self.beta_user}, β_item={self.beta_item}, β_bipartite={self.beta_bipartite}")
         
         # Compute eigendecompositions (skip if raw_only mode)
         if not self.raw_only:
             self._setup_spectral_filters()
     
     # Removed learnable gamma methods - using standard GF-CF normalization
+    
+    def _setup_degree_matrices(self):
+        """Precompute degree matrices for normalization"""
+        # User degrees (number of items each user interacted with)
+        user_degrees = self.adj_mat.sum(axis=1).A1  # Convert to 1D array
+        user_degrees_pow = np.power(user_degrees + 1e-10, self.beta_user)  # Add small epsilon to avoid division by zero
+        user_degrees_pow_inv = np.power(user_degrees + 1e-10, -self.beta_user)
+        
+        # Item degrees (number of users who interacted with each item)
+        item_degrees = self.adj_mat.sum(axis=0).A1  # Convert to 1D array
+        item_degrees_pow = np.power(item_degrees + 1e-10, self.beta_item)
+        item_degrees_pow_inv = np.power(item_degrees + 1e-10, -self.beta_item)
+        
+        # Store as buffers
+        self.register_buffer('user_degrees_pow', torch.tensor(user_degrees_pow, dtype=torch.float32).to(self.device))
+        self.register_buffer('user_degrees_pow_inv', torch.tensor(user_degrees_pow_inv, dtype=torch.float32).to(self.device))
+        self.register_buffer('item_degrees_pow', torch.tensor(item_degrees_pow, dtype=torch.float32).to(self.device))
+        self.register_buffer('item_degrees_pow_inv', torch.tensor(item_degrees_pow_inv, dtype=torch.float32).to(self.device))
+        
+        # For bipartite, we need combined degrees
+        if 'b' in self.filter_views and self.beta_bipartite > 0:
+            # Bipartite graph has both users and items as nodes
+            bipartite_degrees = np.concatenate([user_degrees, item_degrees])
+            bipartite_degrees_pow = np.power(bipartite_degrees + 1e-10, self.beta_bipartite)
+            bipartite_degrees_pow_inv = np.power(bipartite_degrees + 1e-10, -self.beta_bipartite)
+            
+            self.register_buffer('bipartite_degrees_pow', torch.tensor(bipartite_degrees_pow, dtype=torch.float32).to(self.device))
+            self.register_buffer('bipartite_degrees_pow_inv', torch.tensor(bipartite_degrees_pow_inv, dtype=torch.float32).to(self.device))
     
     def get_cache_key(self):
         """Generate cache key for similarity matrices"""
@@ -295,17 +333,43 @@ class SpectralCFLearnable(nn.Module):
             # Apply learnable filter to eigenvalues
             filter_response = self.user_filter(self.user_eigenvals)
             
-            # User filtering
-            batch_user_vecs = self.user_eigenvecs[users]  # (batch, n_eigen)
-            user_filtered = batch_user_vecs @ torch.diag(filter_response) @ batch_user_vecs.T @ user_profiles
+            # Apply degree normalization if beta_user > 0
+            if self.beta_user > 0:
+                # Pre-normalize: multiply by D_U^(-beta)
+                batch_user_degrees_inv = self.user_degrees_pow_inv[users].unsqueeze(1)  # (batch, 1)
+                normalized_profiles = user_profiles * batch_user_degrees_inv
+                
+                # User filtering
+                batch_user_vecs = self.user_eigenvecs[users]  # (batch, n_eigen)
+                user_filtered = batch_user_vecs @ torch.diag(filter_response) @ batch_user_vecs.T @ normalized_profiles
+                
+                # Post-normalize: multiply by D_U^(beta)
+                batch_user_degrees = self.user_degrees_pow[users].unsqueeze(1)  # (batch, 1)
+                user_filtered = user_filtered * batch_user_degrees
+            else:
+                # Standard filtering without degree normalization
+                batch_user_vecs = self.user_eigenvecs[users]  # (batch, n_eigen)
+                user_filtered = batch_user_vecs @ torch.diag(filter_response) @ batch_user_vecs.T @ user_profiles
+            
             scores.append(user_filtered)
         
         # Item view filtering
         if 'i' in self.filter_views and hasattr(self, 'item_eigenvals'):
             filter_response = self.item_filter(self.item_eigenvals)
             
-            # Standard item filtering
-            item_filtered = user_profiles @ self.item_eigenvecs @ torch.diag(filter_response) @ self.item_eigenvecs.T
+            # Apply degree normalization if beta_item > 0
+            if self.beta_item > 0:
+                # Pre-normalize: multiply by D_I^(-beta)
+                normalized_profiles = user_profiles * self.item_degrees_pow_inv.unsqueeze(0)  # Broadcasting
+                
+                # Item filtering
+                item_filtered = normalized_profiles @ self.item_eigenvecs @ torch.diag(filter_response) @ self.item_eigenvecs.T
+                
+                # Post-normalize: multiply by D_I^(beta)
+                item_filtered = item_filtered * self.item_degrees_pow.unsqueeze(0)  # Broadcasting
+            else:
+                # Standard item filtering without degree normalization
+                item_filtered = user_profiles @ self.item_eigenvecs @ torch.diag(filter_response) @ self.item_eigenvecs.T
             
             scores.append(item_filtered)
         
@@ -313,9 +377,24 @@ class SpectralCFLearnable(nn.Module):
         if 'b' in self.filter_views and hasattr(self, 'bipartite_eigenvals'):
             filter_response = self.bipartite_filter(self.bipartite_eigenvals)
             
-            # Bipartite filtering
-            batch_bipartite_vecs = self.bipartite_eigenvecs[users]  # (batch, n_eigen)
-            bipartite_filtered = batch_bipartite_vecs @ torch.diag(filter_response) @ batch_bipartite_vecs.T @ user_profiles
+            # Apply degree normalization if beta_bipartite > 0
+            if self.beta_bipartite > 0:
+                # For bipartite, user nodes come first in the combined degree vector
+                batch_bipartite_degrees_inv = self.bipartite_degrees_pow_inv[users].unsqueeze(1)  # (batch, 1)
+                normalized_profiles = user_profiles * batch_bipartite_degrees_inv
+                
+                # Bipartite filtering
+                batch_bipartite_vecs = self.bipartite_eigenvecs[users]  # (batch, n_eigen)
+                bipartite_filtered = batch_bipartite_vecs @ torch.diag(filter_response) @ batch_bipartite_vecs.T @ normalized_profiles
+                
+                # Post-normalize
+                batch_bipartite_degrees = self.bipartite_degrees_pow[users].unsqueeze(1)  # (batch, 1)
+                bipartite_filtered = bipartite_filtered * batch_bipartite_degrees
+            else:
+                # Standard bipartite filtering without degree normalization
+                batch_bipartite_vecs = self.bipartite_eigenvecs[users]  # (batch, n_eigen)
+                bipartite_filtered = batch_bipartite_vecs @ torch.diag(filter_response) @ batch_bipartite_vecs.T @ user_profiles
+            
             scores.append(bipartite_filtered)
         
         # Combine scores

@@ -102,6 +102,14 @@ def parse_args():
     parser.add_argument('--raw_only', action='store_true',
                        help='use only raw two-hop propagation, no spectral filtering')
     
+    # Degree-based normalization (per-view)
+    parser.add_argument('--beta_user', type=float, default=0.0,
+                       help='degree-based normalization for user view (0.0-0.5)')
+    parser.add_argument('--beta_item', type=float, default=0.0,
+                       help='degree-based normalization for item view (0.0-0.5)')
+    parser.add_argument('--beta_bipartite', type=float, default=0.0,
+                       help='degree-based normalization for bipartite view (0.0-0.5)')
+    
     # Removed learnable gamma - using standard GF-CF normalization
     
     return parser.parse_args()
@@ -173,6 +181,11 @@ def get_config(args):
         'use_two_hop': args.use_two_hop,
         'two_hop_weight': args.two_hop_weight,
         'raw_only': args.raw_only,
+        
+        # Degree-based normalization (per-view)
+        'beta_user': args.beta_user,
+        'beta_item': args.beta_item,
+        'beta_bipartite': args.beta_bipartite,
         
         # Removed learnable normalization
     }
