@@ -122,6 +122,12 @@ def parse_args():
     parser.add_argument('--ideal_pass_eta_bipartite', type=int, default=0,
                        help='cutoff frequency for bipartite ideal pass filter (0=use all eigenvalues)')
     
+    # Gated universal model
+    parser.add_argument('--use_gates', action='store_true',
+                       help='enable learnable gates for view combination')
+    parser.add_argument('--gate_l1_weight', type=float, default=0.001,
+                       help='L1 regularization weight for gates (encourages sparsity)')
+    
     # Removed learnable gamma - using standard GF-CF normalization
     
     return parser.parse_args()
@@ -205,6 +211,10 @@ def get_config(args):
         'ideal_pass_eta_user': args.ideal_pass_eta_user,
         'ideal_pass_eta_item': args.ideal_pass_eta_item,
         'ideal_pass_eta_bipartite': args.ideal_pass_eta_bipartite,
+        
+        # Gated universal model
+        'use_gates': args.use_gates,
+        'gate_l1_weight': args.gate_l1_weight,
         
         # Removed learnable normalization
     }

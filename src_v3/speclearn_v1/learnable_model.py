@@ -100,6 +100,17 @@ class SpectralCFLearnable(nn.Module):
         self.ideal_pass_eta_item = config.get('ideal_pass_eta_item', 0)
         self.ideal_pass_eta_bipartite = config.get('ideal_pass_eta_bipartite', 0)
         
+        # Gated universal model
+        self.use_gates = config.get('use_gates', False)
+        self.gate_l1_weight = config.get('gate_l1_weight', 0.001)
+        
+        if self.use_gates:
+            # Initialize gates for each view
+            self.user_gate = nn.Parameter(torch.ones(1))
+            self.item_gate = nn.Parameter(torch.ones(1))
+            self.bipartite_gate = nn.Parameter(torch.ones(1))
+            self.spatial_gate = nn.Parameter(torch.ones(1))  # for two-hop
+        
         # Removed learnable gamma - use standard GF-CF normalization (gamma=0.5)
         
         # Compute and store degree matrices for normalization
@@ -123,6 +134,8 @@ class SpectralCFLearnable(nn.Module):
                 print(f"  Item cutoff: {self.ideal_pass_eta_item}")
             if self.ideal_pass_eta_bipartite > 0:
                 print(f"  Bipartite cutoff: {self.ideal_pass_eta_bipartite}")
+        if self.use_gates:
+            print(f"Gated model enabled with L1 weight: {self.gate_l1_weight}")
         
         # Compute eigendecompositions (skip if raw_only mode)
         if not self.raw_only:
@@ -461,19 +474,46 @@ class SpectralCFLearnable(nn.Module):
             
             scores.append(bipartite_filtered)
         
-        # Combine scores
-        if not scores:
-            final_scores = user_profiles
-        else:
-            final_scores = sum(scores) / len(scores)
-        
-        # Add two-hop propagation if enabled
-        if self.use_two_hop:
-            # Two-hop: user_profiles @ precomputed_two_hop_matrix
-            two_hop_scores = user_profiles @ self.two_hop_matrix
+        # Combine scores with gates if enabled
+        if self.use_gates:
+            # Apply sigmoid gates to each component
+            gated_scores = []
+            score_idx = 0
             
-            # Combine with learnable weight
-            final_scores = final_scores + self.two_hop_weight * two_hop_scores
+            # Apply gates to spectral components
+            if 'u' in self.filter_views and hasattr(self, 'user_eigenvals') and score_idx < len(scores):
+                gated_scores.append(torch.sigmoid(self.user_gate) * scores[score_idx])
+                score_idx += 1
+                
+            if 'i' in self.filter_views and hasattr(self, 'item_eigenvals') and score_idx < len(scores):
+                gated_scores.append(torch.sigmoid(self.item_gate) * scores[score_idx])
+                score_idx += 1
+                
+            if 'b' in self.filter_views and hasattr(self, 'bipartite_eigenvals') and score_idx < len(scores):
+                gated_scores.append(torch.sigmoid(self.bipartite_gate) * scores[score_idx])
+                score_idx += 1
+            
+            # Two-hop propagation with gate
+            if self.use_two_hop:
+                two_hop_scores = user_profiles @ self.two_hop_matrix
+                gated_scores.append(torch.sigmoid(self.spatial_gate) * two_hop_scores)
+            
+            # Sum gated components (gates handle the weighting)
+            final_scores = sum(gated_scores) if gated_scores else user_profiles
+        else:
+            # Original combination method
+            if not scores:
+                final_scores = user_profiles
+            else:
+                final_scores = sum(scores) / len(scores)
+            
+            # Add two-hop propagation if enabled
+            if self.use_two_hop:
+                # Two-hop: user_profiles @ precomputed_two_hop_matrix
+                two_hop_scores = user_profiles @ self.two_hop_matrix
+                
+                # Combine with learnable weight
+                final_scores = final_scores + self.two_hop_weight * two_hop_scores
         
         return final_scores
     
@@ -530,4 +570,60 @@ class SpectralCFLearnable(nn.Module):
                 'name': 'ideal_pass_alpha'
             })
         
+        # Add gates if enabled
+        if self.use_gates:
+            gate_params = []
+            if hasattr(self, 'user_gate'):
+                gate_params.append(self.user_gate)
+            if hasattr(self, 'item_gate'):
+                gate_params.append(self.item_gate)
+            if hasattr(self, 'bipartite_gate'):
+                gate_params.append(self.bipartite_gate)
+            if hasattr(self, 'spatial_gate'):
+                gate_params.append(self.spatial_gate)
+                
+            if gate_params:
+                groups.append({
+                    'params': gate_params,
+                    'lr': 0.01,  # Moderate learning rate for gates
+                    'weight_decay': 0,  # No weight decay, we use L1 instead
+                    'name': 'gates'
+                })
+        
         return groups
+    
+    def get_gate_l1_loss(self):
+        """Compute L1 regularization loss for gates to encourage sparsity"""
+        if not self.use_gates:
+            return torch.tensor(0.0).to(self.device)
+        
+        l1_loss = torch.tensor(0.0).to(self.device)
+        
+        # Add L1 penalty for each gate (encourages gates to go to 0)
+        if hasattr(self, 'user_gate'):
+            l1_loss = l1_loss + torch.sigmoid(self.user_gate).abs().sum()
+        if hasattr(self, 'item_gate'):
+            l1_loss = l1_loss + torch.sigmoid(self.item_gate).abs().sum()
+        if hasattr(self, 'bipartite_gate'):
+            l1_loss = l1_loss + torch.sigmoid(self.bipartite_gate).abs().sum()
+        if hasattr(self, 'spatial_gate'):
+            l1_loss = l1_loss + torch.sigmoid(self.spatial_gate).abs().sum()
+        
+        return l1_loss * self.gate_l1_weight
+    
+    def get_gate_values(self):
+        """Get current gate values for monitoring"""
+        if not self.use_gates:
+            return {}
+        
+        gate_values = {}
+        if hasattr(self, 'user_gate'):
+            gate_values['user'] = torch.sigmoid(self.user_gate).squeeze().item()
+        if hasattr(self, 'item_gate'):
+            gate_values['item'] = torch.sigmoid(self.item_gate).squeeze().item()
+        if hasattr(self, 'bipartite_gate'):
+            gate_values['bipartite'] = torch.sigmoid(self.bipartite_gate).squeeze().item()
+        if hasattr(self, 'spatial_gate'):
+            gate_values['spatial'] = torch.sigmoid(self.spatial_gate).squeeze().item()
+        
+        return gate_values

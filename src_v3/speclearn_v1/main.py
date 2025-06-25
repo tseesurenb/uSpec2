@@ -190,6 +190,12 @@ def main():
             if hasattr(model, 'use_two_hop') and model.use_two_hop and model.dataset != 'amazon-book':
                 print(f"Two-hop weight: {model.two_hop_weight.item():.4f}")
             
+            # Log gate values if using gates
+            if hasattr(model, 'use_gates') and model.use_gates:
+                gate_values = model.get_gate_values()
+                gate_str = " | ".join([f"{k}: {v:.3f}" for k, v in gate_values.items()])
+                print(f"Gates: {gate_str}")
+            
             # Plateau scheduler
             if scheduler and config['scheduler'] == 'plateau':
                 scheduler.step(ndcg)
@@ -265,7 +271,10 @@ def MSE_train_learnable(dataset, model, optimizer, batch_size=2048):
         for param in model.bipartite_filter.parameters():
             reg_loss += model.bipartite_decay * torch.norm(param, 2)
     
-    total_loss = loss + reg_loss
+    # Add gate L1 regularization if using gates
+    gate_loss = model.get_gate_l1_loss()
+    
+    total_loss = loss + reg_loss + gate_loss
     
     # Backward and optimize
     total_loss.backward()
@@ -316,7 +325,10 @@ def BPR_train_learnable(dataset, model, optimizer, neg_ratio=1, batch_size=2048)
             for param in model.bipartite_filter.parameters():
                 reg_loss += model.bipartite_decay * torch.norm(param, 2)
         
-        loss = loss + reg_loss
+        # Add gate L1 regularization if using gates
+        gate_loss = model.get_gate_l1_loss()
+        
+        loss = loss + reg_loss + gate_loss
         
         # Backward and optimize
         loss.backward()
